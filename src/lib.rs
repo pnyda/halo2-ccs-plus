@@ -1,10 +1,108 @@
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
+use folding_schemes::arith::ccs::CCS;
 use halo2_proofs::arithmetic::Field;
 use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper};
 use halo2_proofs::pasta::Fp;
 use halo2_proofs::{circuit::*, plonk::*, poly::Rotation};
 use std::marker::PhantomData;
+
+#[test]
+fn test_monomials() -> Result<(), Error> {
+    let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
+    dbg!(&custom_gates);
+
+    let monomials: Vec<Vec<Monomial<Fp>>> = custom_gates
+        .into_iter()
+        .map(|expr| get_monomials(expr))
+        .collect();
+    dbg!(monomials);
+
+    // let ccs = CCS {
+    //     M: generate_m(monomials, constant_columns)
+    // };
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Query {
+    Fixed(FixedQuery),
+    Advice(AdviceQuery),
+    Instance(InstanceQuery),
+    Selector(Selector),
+}
+
+#[derive(Debug)]
+struct Monomial<F: Field> {
+    coefficient: F,
+    variables: Vec<Query>,
+}
+
+fn get_monomials<F: Field>(expr: Expression<F>) -> Vec<Monomial<F>> {
+    match expr {
+        Expression::Constant(constant) => vec![Monomial {
+            coefficient: constant,
+            variables: vec![],
+        }],
+        Expression::Selector(query) => vec![Monomial {
+            coefficient: F::ONE,
+            variables: vec![Query::Selector(query)],
+        }],
+        Expression::Advice(query) => vec![Monomial {
+            coefficient: F::ONE,
+            variables: vec![Query::Advice(query)],
+        }],
+        Expression::Fixed(query) => vec![Monomial {
+            coefficient: F::ONE,
+            variables: vec![Query::Fixed(query)],
+        }],
+        Expression::Instance(query) => vec![Monomial {
+            coefficient: F::ONE,
+            variables: vec![Query::Instance(query)],
+        }],
+        Expression::Negated(expr) => get_monomials(*expr)
+            .into_iter()
+            .map(|original| Monomial {
+                coefficient: original.coefficient.neg(),
+                variables: original.variables,
+            })
+            .collect(),
+        Expression::Scaled(expr, scalar) => get_monomials(*expr)
+            .into_iter()
+            .map(|original| Monomial {
+                coefficient: original.coefficient * scalar,
+                variables: original.variables,
+            })
+            .collect(),
+        Expression::Sum(lhs, rhs) => {
+            let mut result = Vec::new();
+            result.extend(get_monomials(*lhs));
+            result.extend(get_monomials(*rhs));
+            result
+        }
+        Expression::Product(lhs, rhs) => {
+            let lhs_monomials = get_monomials(*lhs);
+            let rhs_monomials = get_monomials(*rhs);
+            let mut result = Vec::new();
+
+            for lhs_monomial in lhs_monomials.iter() {
+                for rhs_monomial in rhs_monomials.iter() {
+                    let mut variables = Vec::new();
+                    variables.extend(lhs_monomial.variables.iter().copied());
+                    variables.extend(rhs_monomial.variables.iter().copied());
+
+                    result.push(Monomial {
+                        coefficient: lhs_monomial.coefficient * rhs_monomial.coefficient,
+                        variables,
+                    })
+                }
+            }
+
+            result
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct FibonacciConfig {
@@ -154,29 +252,4 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
 
         Ok(())
     }
-}
-
-fn main() -> Result<(), Error> {
-    let k = 4;
-    let mut meta = ConstraintSystem::<Fp>::default();
-    let config = MyCircuit::configure(&mut meta);
-
-    let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
-    cell_dumper.instance[0][0] = Value::known(1.into());
-    cell_dumper.instance[0][1] = Value::known(1.into());
-    cell_dumper.instance[0][2] = Value::known(55.into());
-
-    let circuit = MyCircuit(PhantomData);
-    <<MyCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
-        &mut cell_dumper,
-        &circuit,
-        config,
-        meta.constants.clone(),
-    )?;
-
-    dbg!(cell_dumper);
-    dbg!(dump_gates::<Fp, MyCircuit<Fp>>());
-    dbg!(dump_lookups::<Fp, MyCircuit<Fp>>());
-
-    Ok(())
 }
