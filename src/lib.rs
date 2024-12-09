@@ -1,11 +1,13 @@
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
+use folding_schemes::utils::vec::SparseMatrix;
 use folding_schemes::arith::ccs::CCS;
 use halo2_proofs::arithmetic::Field;
 use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper};
 use halo2_proofs::pasta::Fp;
 use halo2_proofs::{circuit::*, plonk::*, poly::Rotation};
 use std::marker::PhantomData;
+use std::collections::HashMap;
 
 #[test]
 fn test_monomials() -> Result<(), Error> {
@@ -252,4 +254,38 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
 
         Ok(())
     }
+}
+
+// A mapping from absolute cell position in the original table (column_type, column_index, row_index)
+// to the position in Z
+// We'll arrange Z in the order of 1 -> instance cells -> advice cells
+fn generate_cell_mapping(k: u32, monomials: &[Monomial<Fp>], num_instance_columns: usize) -> HashMap<(Any, usize, usize), usize> {
+    let table_height = 1 << k;
+    let mut cell_mapping = HashMap::new();
+
+    for monomial in monomials.iter() {
+        for query in monomial.variables.iter() {
+            for y in 0usize..table_height {
+                match query {
+                    Query::Instance(query) => {
+                        let row_index = (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
+                        let z_index = 1 + query.column_index * table_height + row_index;
+                        cell_mapping.insert((Any::Instance, query.column_index, row_index), z_index);
+                    }
+                    Query::Advice(query) => {
+                        let row_index = (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
+                        let z_index = 1 + (num_instance_columns + query.column_index) * table_height + row_index;
+                        cell_mapping.insert((Any::Advice, query.column_index, row_index), z_index);
+                    }
+                    Query::Selector(_) | Query::Fixed(_) => {
+                        // Fixed cells will not placed on Z. It will be in M_j.
+                    }
+                }
+            }
+        }
+    }
+
+
+    // TODO: Handle copy constraints
+    cell_mapping
 }
