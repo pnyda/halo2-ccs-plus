@@ -1,5 +1,7 @@
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
+use ark_ff::PrimeField;
+use ff::PrimeField as _;
 use folding_schemes::arith::ccs::CCS;
 use folding_schemes::utils::vec::SparseMatrix;
 use halo2_proofs::arithmetic::Field;
@@ -443,4 +445,63 @@ fn generate_deduplication_map(
     }
 
     deduplication_map
+}
+
+fn generate_mj<F: PrimeField>(
+    query: Query,
+    table_height: usize,
+    witness_size: usize,
+    cell_mapping: HashMap<AbsoluteCellPosition, CCSValue>,
+) -> SparseMatrix<F> {
+    let mut mj = SparseMatrix::empty();
+    mj.n_cols = witness_size;
+    mj.n_rows = table_height;
+    // might increase later when there was multiple custom gates.
+
+    for y in 0..table_height {
+        let cell_position = match query {
+            Query::Selector(query) => AbsoluteCellPosition {
+                column_type: VirtualColumnType::Selector,
+                column_index: query.0,
+                row_index: y,
+            },
+            Query::Fixed(query) => AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: query.column_index,
+                row_index: (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize,
+            },
+            Query::Instance(query) => AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: query.column_index,
+                row_index: (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize,
+            },
+            Query::Advice(query) => AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: query.column_index,
+                row_index: (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize,
+            },
+        };
+
+        let ccs_value = cell_mapping.get(&cell_position).unwrap();
+        match ccs_value {
+            CCSValue::InsideZ(z_index) => {
+                // If the query refers to an instance or advice cell
+                // mj[y, z_index] = 1
+                mj.coeffs.push(Vec::new());
+                mj.coeffs.last_mut().unwrap().push((F::one(), *z_index));
+            }
+            CCSValue::InsideM(value) => {
+                // If the query refers to an fixed or selector cell
+
+                // TODO: Do this somewhere else.
+                let value = F::from_le_bytes_mod_order(&value.to_repr());
+
+                // mj[y, 0] = value
+                mj.coeffs.push(Vec::new());
+                mj.coeffs.last_mut().unwrap().push((value, 0));
+            }
+        }
+    }
+
+    mj
 }
