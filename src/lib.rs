@@ -6,6 +6,7 @@ use halo2_proofs::arithmetic::Field;
 use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper, CopyConstraint};
 use halo2_proofs::pasta::Fp;
 use halo2_proofs::{circuit::*, plonk::*, poly::Rotation};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -347,15 +348,29 @@ fn generate_cell_mapping(
         }
     }
 
+    // Next, incorporate the copy constraints into the mapping.
+    for (deduplicate_from, deduplicate_into) in generate_deduplication_map(copy_constraints) {
+        let ccs_value = cell_mapping.get(&deduplicate_into).copied().unwrap();
+        if let Some(pointer) = cell_mapping.get_mut(&deduplicate_from) {
+            *pointer = ccs_value;
+        }
+    }
+
     cell_mapping
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// I use this Ord impl for witness deduplication.
+// Cells with greater ordering will get deduplicated into cells with less ordering.
+// If there was a copy constraint between an advice cell and an instance cell,
+//   the former will get deduplicated into the latter.
+// If there was a copy constraint between an advice cell and a fixed cell,
+//   the former will get deduplicated into the latter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum VirtualColumnType {
+    Selector,
+    Fixed,
     Instance,
     Advice,
-    Fixed,
-    Selector,
 }
 
 impl From<Any> for VirtualColumnType {
@@ -373,4 +388,59 @@ struct AbsoluteCellPosition {
     column_type: VirtualColumnType,
     column_index: usize,
     row_index: usize,
+}
+
+// I use this Ord impl for witness deduplication.
+// Cells with greater ordering will get deduplicated into cells with less ordering.
+impl Ord for AbsoluteCellPosition {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.column_type.cmp(&other.column_type) {
+            Ordering::Equal => match self.column_index.cmp(&other.column_index) {
+                Ordering::Equal => self.row_index.cmp(&other.row_index),
+                ordering => ordering,
+            },
+            ordering => ordering,
+        }
+    }
+}
+
+impl PartialOrd for AbsoluteCellPosition {
+    fn partial_cmp(&self, other: &AbsoluteCellPosition) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+// A key-value map that represents the destination into which a cell gets deduplicated.
+// Cells with greater ordering will get deduplicated into cells with less ordering.
+fn generate_deduplication_map(
+    copy_constraints: &[CopyConstraint],
+) -> HashMap<AbsoluteCellPosition, AbsoluteCellPosition> {
+    let mut deduplication_map = HashMap::new();
+
+    for copy_constraint in copy_constraints.iter() {
+        let left = AbsoluteCellPosition {
+            column_type: copy_constraint.from_column_type.into(),
+            column_index: copy_constraint.from_column_index,
+            row_index: copy_constraint.from_row_index,
+        };
+        let right = AbsoluteCellPosition {
+            column_type: copy_constraint.to_column_type.into(),
+            column_index: copy_constraint.to_column_index,
+            row_index: copy_constraint.to_row_index,
+        };
+
+        if let Some(pointer) = deduplication_map.get_mut(&left) {
+            *pointer = right.min(*pointer)
+        } else if left > right {
+            deduplication_map.insert(left, right);
+        }
+
+        if let Some(pointer) = deduplication_map.get_mut(&right) {
+            *pointer = left.min(*pointer)
+        } else if left < right {
+            deduplication_map.insert(right, left);
+        }
+    }
+
+    deduplication_map
 }
