@@ -1,13 +1,13 @@
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
-use folding_schemes::utils::vec::SparseMatrix;
 use folding_schemes::arith::ccs::CCS;
+use folding_schemes::utils::vec::SparseMatrix;
 use halo2_proofs::arithmetic::Field;
-use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper};
+use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper, CopyConstraint};
 use halo2_proofs::pasta::Fp;
 use halo2_proofs::{circuit::*, plonk::*, poly::Rotation};
-use std::marker::PhantomData;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 #[test]
 fn test_monomials() -> Result<(), Error> {
@@ -19,6 +19,27 @@ fn test_monomials() -> Result<(), Error> {
         .map(|expr| get_monomials(expr))
         .collect();
     dbg!(monomials);
+
+    let k = 4;
+    let mut meta = ConstraintSystem::<Fp>::default();
+    let config = MyCircuit::configure(&mut meta);
+
+    let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
+    cell_dumper.instance[0][0] = Value::known(1.into());
+    cell_dumper.instance[0][1] = Value::known(1.into());
+    cell_dumper.instance[0][2] = Value::known(55.into());
+
+    let circuit = MyCircuit(PhantomData);
+    <<MyCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
+        &mut cell_dumper,
+        &circuit,
+        config,
+        meta.constants.clone(),
+    )?;
+
+    dbg!(cell_dumper);
+    dbg!(dump_gates::<Fp, MyCircuit<Fp>>());
+    dbg!(dump_lookups::<Fp, MyCircuit<Fp>>());
 
     // let ccs = CCS {
     //     M: generate_m(monomials, constant_columns)
@@ -256,36 +277,109 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum CCSValue {
+    InsideZ(usize), // z_index
+    InsideM(Fp),    // fixed value
+                    // TODO: Support generic field
+                    // TODO: Use arkworks::Field instead of halo2::Field
+}
+
 // A mapping from absolute cell position in the original table (column_type, column_index, row_index)
 // to the position in Z
 // We'll arrange Z in the order of 1 -> instance cells -> advice cells
-fn generate_cell_mapping(k: u32, monomials: &[Monomial<Fp>], num_instance_columns: usize) -> HashMap<(Any, usize, usize), usize> {
+fn generate_cell_mapping(
+    k: u32,
+    monomials: &[Monomial<Fp>],
+    num_instance_columns: usize,
+    copy_constraints: &[CopyConstraint],
+    fixed: Vec<Vec<Option<Fp>>>,
+    selectors: Vec<Vec<Option<bool>>>,
+) -> HashMap<AbsoluteCellPosition, CCSValue> {
+    // First, generate the mapping with no respect to copy constraints.
     let table_height = 1 << k;
-    let mut cell_mapping = HashMap::new();
+    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue> = HashMap::new();
 
     for monomial in monomials.iter() {
         for query in monomial.variables.iter() {
             for y in 0usize..table_height {
                 match query {
                     Query::Instance(query) => {
-                        let row_index = (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
+                        let row_index =
+                            (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
                         let z_index = 1 + query.column_index * table_height + row_index;
-                        cell_mapping.insert((Any::Instance, query.column_index, row_index), z_index);
+                        let cell_position = AbsoluteCellPosition {
+                            column_type: VirtualColumnType::Instance,
+                            column_index: query.column_index,
+                            row_index,
+                        };
+                        cell_mapping.insert(cell_position, CCSValue::InsideZ(z_index));
                     }
                     Query::Advice(query) => {
-                        let row_index = (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
-                        let z_index = 1 + (num_instance_columns + query.column_index) * table_height + row_index;
-                        cell_mapping.insert((Any::Advice, query.column_index, row_index), z_index);
+                        let row_index =
+                            (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
+                        let z_index = 1
+                            + (num_instance_columns + query.column_index) * table_height
+                            + row_index;
+                        let cell_position = AbsoluteCellPosition {
+                            column_type: VirtualColumnType::Advice,
+                            column_index: query.column_index,
+                            row_index,
+                        };
+                        cell_mapping.insert(cell_position, CCSValue::InsideZ(z_index));
                     }
-                    Query::Selector(_) | Query::Fixed(_) => {
-                        // Fixed cells will not placed on Z. It will be in M_j.
+                    Query::Fixed(query) => {
+                        let row_index =
+                            (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
+                        // TODO: Is it okay to initialize an unassigned cell with 0?
+                        let value = fixed[query.column_index][row_index].unwrap_or(Fp::ZERO);
+                        let cell_position = AbsoluteCellPosition {
+                            column_type: VirtualColumnType::Fixed,
+                            column_index: query.column_index,
+                            row_index,
+                        };
+                        cell_mapping.insert(cell_position, CCSValue::InsideM(value));
+                    }
+                    Query::Selector(query) => {
+                        let row_index = y;
+                        // TODO: Is it okay to initialize an unassigned selector cell with false?
+                        let value = selectors[query.0][row_index].unwrap_or(false);
+                        let cell_position = AbsoluteCellPosition {
+                            column_type: VirtualColumnType::Selector,
+                            column_index: query.0,
+                            row_index,
+                        };
+                        cell_mapping.insert(cell_position, CCSValue::InsideM(value.into()));
                     }
                 }
             }
         }
     }
 
-
-    // TODO: Handle copy constraints
     cell_mapping
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum VirtualColumnType {
+    Instance,
+    Advice,
+    Fixed,
+    Selector,
+}
+
+impl From<Any> for VirtualColumnType {
+    fn from(value: Any) -> Self {
+        match value {
+            Any::Instance => VirtualColumnType::Instance,
+            Any::Advice => VirtualColumnType::Advice,
+            Any::Fixed => VirtualColumnType::Fixed,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+struct AbsoluteCellPosition {
+    column_type: VirtualColumnType,
+    column_index: usize,
+    row_index: usize,
 }
