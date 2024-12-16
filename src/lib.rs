@@ -289,70 +289,61 @@ enum CCSValue {
 // to the position in Z
 // We'll arrange Z in the order of 1 -> instance cells -> advice cells
 fn generate_cell_mapping(
-    k: u32,
-    monomials: &[Monomial<Fp>],
-    num_instance_columns: usize,
+    instance: &[&[Option<Fp>]],
+    advice: &[&[Option<Fp>]],
+    fixed: &[&[Option<Fp>]],
+    selectors: &[&[Option<bool>]],
     copy_constraints: &[CopyConstraint],
-    fixed: Vec<Vec<Option<Fp>>>,
-    selectors: Vec<Vec<Option<bool>>>,
 ) -> HashMap<AbsoluteCellPosition, CCSValue> {
-    // First, generate the mapping with no respect to copy constraints.
-    let table_height = 1 << k;
     let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue> = HashMap::new();
 
-    for monomial in monomials.iter() {
-        for query in monomial.variables.iter() {
-            for y in 0usize..table_height {
-                match query {
-                    Query::Instance(query) => {
-                        let row_index =
-                            (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
-                        let z_index = 1 + query.column_index * table_height + row_index;
-                        let cell_position = AbsoluteCellPosition {
-                            column_type: VirtualColumnType::Instance,
-                            column_index: query.column_index,
-                            row_index,
-                        };
-                        cell_mapping.insert(cell_position, CCSValue::InsideZ(z_index));
-                    }
-                    Query::Advice(query) => {
-                        let row_index =
-                            (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
-                        let z_index = 1
-                            + (num_instance_columns + query.column_index) * table_height
-                            + row_index;
-                        let cell_position = AbsoluteCellPosition {
-                            column_type: VirtualColumnType::Advice,
-                            column_index: query.column_index,
-                            row_index,
-                        };
-                        cell_mapping.insert(cell_position, CCSValue::InsideZ(z_index));
-                    }
-                    Query::Fixed(query) => {
-                        let row_index =
-                            (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize;
-                        // TODO: Is it okay to initialize an unassigned cell with 0?
-                        let value = fixed[query.column_index][row_index].unwrap_or(Fp::ZERO);
-                        let cell_position = AbsoluteCellPosition {
-                            column_type: VirtualColumnType::Fixed,
-                            column_index: query.column_index,
-                            row_index,
-                        };
-                        cell_mapping.insert(cell_position, CCSValue::InsideM(value));
-                    }
-                    Query::Selector(query) => {
-                        let row_index = y;
-                        // TODO: Is it okay to initialize an unassigned selector cell with false?
-                        let value = selectors[query.0][row_index].unwrap_or(false);
-                        let cell_position = AbsoluteCellPosition {
-                            column_type: VirtualColumnType::Selector,
-                            column_index: query.0,
-                            row_index,
-                        };
-                        cell_mapping.insert(cell_position, CCSValue::InsideM(value.into()));
-                    }
-                }
-            }
+    for (column_index, column) in instance.into_iter().enumerate() {
+        for (row_index, _) in column.into_iter().enumerate() {
+            let z_index = 1 + cell_mapping.len();
+            let cell_position = AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index,
+                row_index,
+            };
+            cell_mapping.insert(cell_position, CCSValue::InsideZ(z_index));
+        }
+    }
+
+    for (column_index, column) in advice.into_iter().enumerate() {
+        for (row_index, _) in column.into_iter().enumerate() {
+            let z_index = 1 + cell_mapping.len();
+            let cell_position = AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index,
+                row_index,
+            };
+            cell_mapping.insert(cell_position, CCSValue::InsideZ(z_index));
+        }
+    }
+
+    for (column_index, column) in fixed.into_iter().enumerate() {
+        for (row_index, cell) in column.into_iter().enumerate() {
+            // TODO: Is it okay to initialize unassigned fixed cell with 0?
+            let value = cell.unwrap_or(Fp::ZERO);
+            let cell_position = AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index,
+                row_index,
+            };
+            cell_mapping.insert(cell_position, CCSValue::InsideM(value));
+        }
+    }
+
+    for (column_index, column) in selectors.into_iter().enumerate() {
+        for (row_index, cell) in column.into_iter().enumerate() {
+            // TODO: Is it okay to initialize unassigned selector cell with false?
+            let value = cell.unwrap_or(false).into();
+            let cell_position = AbsoluteCellPosition {
+                column_type: VirtualColumnType::Selector,
+                column_index,
+                row_index,
+            };
+            cell_mapping.insert(cell_position, CCSValue::InsideM(value));
         }
     }
 
