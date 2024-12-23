@@ -1,6 +1,7 @@
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
 use ark_ff::PrimeField;
+use ark_std::log2;
 use ff::PrimeField as _;
 use folding_schemes::arith::ccs::CCS;
 use folding_schemes::utils::vec::SparseMatrix;
@@ -9,7 +10,8 @@ use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper, CopyConstra
 use halo2_proofs::pasta::Fp;
 use halo2_proofs::{circuit::*, plonk::*, poly::Rotation};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
 #[test]
@@ -58,6 +60,58 @@ enum Query {
     Instance(InstanceQuery),
     Selector(Selector),
 }
+
+impl Hash for Query {
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        // Ignore query_index and care only about the cell position
+
+        match self {
+            Self::Fixed(query) => {
+                hasher.write(&[0u8]); // enum variant ID
+                hasher.write(&query.rotation.0.to_le_bytes());
+                hasher.write(&query.column_index.to_le_bytes());
+            }
+            Self::Advice(query) => {
+                hasher.write(&[1u8]); // enum variant ID
+                hasher.write(&query.rotation.0.to_le_bytes());
+                hasher.write(&query.column_index.to_le_bytes());
+            }
+            Self::Instance(query) => {
+                hasher.write(&[2u8]); // enum variant ID
+                hasher.write(&query.rotation.0.to_le_bytes());
+                hasher.write(&query.column_index.to_le_bytes());
+            }
+            Self::Selector(query) => {
+                hasher.write(&[3u8]); // enum variant ID
+                hasher.write(&query.0.to_le_bytes());
+            }
+        }
+
+        hasher.finish();
+    }
+}
+
+impl PartialEq for Query {
+    fn eq(&self, other: &Self) -> bool {
+        // Ignore query_index and care only about the cell position
+
+        match (self, other) {
+            (Self::Fixed(lhs), Self::Fixed(rhs)) => {
+                lhs.rotation == rhs.rotation && lhs.column_index == rhs.column_index
+            }
+            (Self::Advice(lhs), Self::Advice(rhs)) => {
+                lhs.rotation == rhs.rotation && lhs.column_index == rhs.column_index
+            }
+            (Self::Instance(lhs), Self::Instance(rhs)) => {
+                lhs.rotation == rhs.rotation && lhs.column_index == rhs.column_index
+            }
+            (Self::Selector(lhs), Self::Selector(rhs)) => lhs.0 == rhs.0,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Query {}
 
 #[derive(Debug)]
 struct Monomial<F: Field> {
@@ -451,7 +505,7 @@ fn generate_mj<F: PrimeField>(
     query: Query,
     table_height: usize,
     witness_size: usize,
-    cell_mapping: HashMap<AbsoluteCellPosition, CCSValue>,
+    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue>,
 ) -> SparseMatrix<F> {
     let mut mj = SparseMatrix::empty();
     mj.n_cols = witness_size;
@@ -504,4 +558,61 @@ fn generate_mj<F: PrimeField>(
     }
 
     mj
+}
+
+// Right now it only supports single custom gate
+// TODO: Support multiple custom gates
+fn generate_ccs_instance<F: ark_ff::PrimeField>(
+    monomials: &[Monomial<Fp>],
+    table_height: usize,
+    witness_size: usize,
+    cell_mapping: HashMap<AbsoluteCellPosition, CCSValue>,
+) -> CCS<F> {
+    // Remove duplication
+    let mut m_map: HashMap<Query, SparseMatrix<F>> = HashMap::new();
+    for monomial in monomials {
+        for query in monomial.variables.iter() {
+            m_map.insert(
+                *query,
+                generate_mj(*query, table_height, witness_size, &cell_mapping),
+            );
+        }
+    }
+    let m_pair: Vec<(Query, SparseMatrix<F>)> = m_map.into_iter().collect();
+
+    let c: Vec<F> = monomials
+        .iter()
+        .map(|monomial| F::from_le_bytes_mod_order(&monomial.coefficient.to_repr()))
+        .collect();
+    let S: Vec<Vec<usize>> = monomials
+        .iter()
+        .map(|monomial| {
+            monomial
+                .variables
+                .iter()
+                .map(|query1| {
+                    let j = m_pair
+                        .iter()
+                        .position(|(query2, _)| query1 == query2)
+                        .unwrap();
+                    j
+                })
+                .collect()
+        })
+        .collect();
+    let M: Vec<SparseMatrix<F>> = m_pair.into_iter().map(|(_, mat)| mat).collect();
+
+    CCS {
+        m: table_height,
+        n: witness_size,
+        l: table_height, // TODO: This is a tmp value. Calculate legit l.
+        t: M.len(),
+        q: S.len(),
+        d: 0, // TODO: Calculate legit d
+        s: log2(table_height) as usize,
+        s_prime: log2(witness_size) as usize,
+        M: M,
+        S: S,
+        c: c,
+    }
 }
