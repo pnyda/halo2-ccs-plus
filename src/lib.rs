@@ -344,7 +344,6 @@ enum CCSValue {
 
 // A mapping from absolute cell position in the original table (column_type, column_index, row_index)
 // to the position in Z
-// We'll arrange Z in the order of 1 -> instance cells -> advice cells
 fn generate_cell_mapping(
     instance: &[&[Option<Fp>]],
     advice: &[&[Option<Fp>]],
@@ -409,6 +408,21 @@ fn generate_cell_mapping(
         let ccs_value = cell_mapping.get(&deduplicate_into).copied().unwrap();
         if let Some(pointer) = cell_mapping.get_mut(&deduplicate_from) {
             *pointer = ccs_value;
+        }
+    }
+
+    // The witness deduplication will make some z_index unused
+    // Thus we have to reassign z_index
+    let mut z_index_remap: HashMap<usize, usize> = HashMap::new();
+    for ccs_value in cell_mapping.values_mut() {
+        if let CCSValue::InsideZ(old_z_index) = ccs_value {
+            if let Some(new_z_index) = z_index_remap.get(old_z_index).copied() {
+                *old_z_index = new_z_index;
+            } else {
+                let new_z_index = z_index_remap.len() + 1; // +1 because we shouldn't assign witness at Z[0]
+                *old_z_index = new_z_index;
+                z_index_remap.insert(*old_z_index, new_z_index);
+            }
         }
     }
 
