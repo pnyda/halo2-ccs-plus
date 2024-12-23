@@ -619,7 +619,7 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
     CCS {
         m: table_height,
         n: witness_size,
-        l: table_height, // TODO: This is a tmp value. Calculate legit l.
+        l: table_height, // I'm assuming here that there is only 1 advice column. TODO: Support multiple advice cols
         t: M.len(),
         q: S.len(),
         d: 0, // TODO: Calculate legit d
@@ -629,4 +629,67 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
         S: S,
         c: c,
     }
+}
+
+fn generate_z<F: ark_ff::PrimeField>(
+    instance: &[&[Option<Fp>]],
+    advice: &[&[Option<Fp>]],
+    cell_mapping: HashMap<AbsoluteCellPosition, CCSValue>,
+) -> Vec<F> {
+    let z_height = cell_mapping
+        .values()
+        .map(|ccs_value| match ccs_value {
+            CCSValue::InsideZ(z_index) => *z_index + 1,
+            CCSValue::InsideM(_) => 0,
+        })
+        .max()
+        .expect("|Z| must be above 2");
+    let mut z = vec![None; z_height];
+    z[0] = Some(F::one());
+
+    for (column_index, column) in instance.into_iter().enumerate() {
+        for (row_index, cell) in column.into_iter().enumerate() {
+            let cell_position = AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index,
+                row_index,
+            };
+            if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).unwrap() {
+                // TODO: Convert the type somewhere else
+                let converted = F::from_le_bytes_mod_order(
+                    &cell
+                        .expect("Encountered an unassigned instance cell")
+                        .to_repr(),
+                );
+                z[*z_index] = Some(converted);
+            } else {
+                unreachable!();
+            }
+        }
+    }
+
+    for (column_index, column) in advice.into_iter().enumerate() {
+        for (row_index, cell) in column.into_iter().enumerate() {
+            let cell_position = AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index,
+                row_index,
+            };
+            if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).unwrap() {
+                // TODO: Convert the type somewhere else
+                let converted = F::from_le_bytes_mod_order(
+                    &cell
+                        .expect("Encountered an unassigned advice cell")
+                        .to_repr(),
+                );
+                z[*z_index] = Some(converted);
+            } else {
+                unreachable!();
+            }
+        }
+    }
+
+    z.into_iter()
+        .map(|witness| witness.expect("There was no unassigned cell in the original Plonkish table but there is one in CCS. Must be a bug?"))
+        .collect()
 }
