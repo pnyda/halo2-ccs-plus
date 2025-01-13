@@ -419,8 +419,8 @@ fn generate_cell_mapping(
                 *old_z_index = new_z_index;
             } else {
                 let new_z_index = z_index_remap.len() + 1; // +1 because we shouldn't assign witness at Z[0]
-                *old_z_index = new_z_index;
                 z_index_remap.insert(*old_z_index, new_z_index);
+                *old_z_index = new_z_index;
             }
         }
     }
