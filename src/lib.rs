@@ -573,7 +573,7 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
         .keys()
         .map(|cell_position| cell_position.row_index + 1)
         .max()
-        .expect("empty cell_mapping");
+        .expect("Empty cell_mapping");
     let z_height = cell_mapping
         .values()
         .map(|ccs_value| match ccs_value {
@@ -581,7 +581,17 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
             CCSValue::InsideM(_) => 0,
         })
         .max()
-        .expect("empty cell mapping");
+        .expect("Empty cell mapping");
+    let num_instance_cells: usize = cell_mapping
+        .keys()
+        .map(|cell_position| {
+            if cell_position.column_type == VirtualColumnType::Instance {
+                1
+            } else {
+                0
+            }
+        })
+        .sum();
 
     // Remove duplication
     let mut m_map: HashMap<Query, SparseMatrix<F>> = HashMap::new();
@@ -620,7 +630,7 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
     CCS {
         m: table_height,
         n: z_height,
-        l: table_height, // I'm assuming here that there is only 1 instance column. TODO: Support multiple instance cols
+        l: num_instance_cells,
         t: M.len(),
         q: S.len(),
         d: 2, // TODO: Calculate legit d
