@@ -654,10 +654,10 @@ fn generate_z<F: ark_ff::PrimeField>(
     let mut z = vec![None; z_height];
     z[0] = Some(F::one());
 
-    for (column_index, column) in instance.into_iter().enumerate() {
+    for (column_index, column) in advice.into_iter().enumerate() {
         for (row_index, cell) in column.into_iter().enumerate() {
             let cell_position = AbsoluteCellPosition {
-                column_type: VirtualColumnType::Instance,
+                column_type: VirtualColumnType::Advice,
                 column_index,
                 row_index,
             };
@@ -675,10 +675,10 @@ fn generate_z<F: ark_ff::PrimeField>(
         }
     }
 
-    for (column_index, column) in advice.into_iter().enumerate() {
+    for (column_index, column) in instance.into_iter().enumerate() {
         for (row_index, cell) in column.into_iter().enumerate() {
             let cell_position = AbsoluteCellPosition {
-                column_type: VirtualColumnType::Advice,
+                column_type: VirtualColumnType::Instance,
                 column_index,
                 row_index,
             };
