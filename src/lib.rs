@@ -3,15 +3,15 @@
 use ark_ff::PrimeField;
 use ark_pallas::Fq;
 use ark_std::log2;
+use ff::Field;
 use ff::PrimeField as _;
 use folding_schemes::arith::ccs::CCS;
 use folding_schemes::utils::vec::SparseMatrix;
-use halo2_proofs::arithmetic::Field;
 use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper, CopyConstraint};
 use halo2_proofs::pasta::Fp;
 use halo2_proofs::{circuit::*, plonk::*, poly::Rotation};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
@@ -338,14 +338,14 @@ enum CCSValue<F: PrimeField> {
 
 // A mapping from absolute cell position in the original table (column_type, column_index, row_index)
 // to the position in Z
-fn generate_cell_mapping<F: PrimeField>(
-    instance: &[&[Option<Fp>]],
-    advice: &[&[Option<Fp>]],
-    fixed: &[&[Option<Fp>]],
+fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
+    instance: &[&[Option<HALO2>]],
+    advice: &[&[Option<HALO2>]],
+    fixed: &[&[Option<HALO2>]],
     selectors: &[&[bool]],
     copy_constraints: &[CopyConstraint],
-) -> HashMap<AbsoluteCellPosition, CCSValue<F>> {
-    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<F>> = HashMap::new();
+) -> HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>> {
+    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>> = HashMap::new();
 
     for (column_index, column) in instance.into_iter().enumerate() {
         for (row_index, _) in column.into_iter().enumerate() {
@@ -374,7 +374,7 @@ fn generate_cell_mapping<F: PrimeField>(
     for (column_index, column) in fixed.into_iter().enumerate() {
         for (row_index, cell) in column.into_iter().enumerate() {
             // TODO: Is it okay to initialize unassigned fixed cell with 0?
-            let value = F::from_le_bytes_mod_order(&cell.unwrap_or(Fp::ZERO).to_repr());
+            let value = ARKWORKS::from_le_bytes_mod_order(&cell.unwrap_or(0.into()).to_repr());
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Fixed,
                 column_index,
@@ -640,11 +640,11 @@ fn generate_ccs_instance<F: PrimeField>(
     }
 }
 
-fn generate_z<F: PrimeField>(
-    instance: &[&[Option<Fp>]],
-    advice: &[&[Option<Fp>]],
-    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
-) -> Vec<F> {
+fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
+    instance: &[&[Option<HALO2>]],
+    advice: &[&[Option<HALO2>]],
+    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>>,
+) -> Vec<ARKWORKS> {
     let z_height = cell_mapping
         .values()
         .map(|ccs_value| match ccs_value {
@@ -656,8 +656,8 @@ fn generate_z<F: PrimeField>(
 
     // Unassigned cell in the original Plonkish table will be initialized with 0.
     // TODO: Is this an appropriate behavior? Should I randomize it?
-    let mut z = vec![F::zero(); z_height];
-    z[0] = F::one();
+    let mut z: Vec<ARKWORKS> = vec![0.into(); z_height];
+    z[0] = 1.into();
 
     for (column_index, column) in advice.into_iter().enumerate() {
         for (row_index, cell) in column.into_iter().enumerate() {
@@ -668,8 +668,7 @@ fn generate_z<F: PrimeField>(
             };
             if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).unwrap() {
                 if let Some(cell) = cell {
-                    // TODO: Convert the type somewhere else
-                    z[*z_index] = F::from_le_bytes_mod_order(&cell.to_repr());
+                    z[*z_index] = ARKWORKS::from_le_bytes_mod_order(&cell.to_repr());
                 }
             } else {
                 unreachable!();
@@ -686,8 +685,7 @@ fn generate_z<F: PrimeField>(
             };
             if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).unwrap() {
                 if let Some(cell) = cell {
-                    // TODO: Convert the type somewhere else
-                    z[*z_index] = F::from_le_bytes_mod_order(&cell.to_repr());
+                    z[*z_index] = ARKWORKS::from_le_bytes_mod_order(&cell.to_repr());
                 }
             } else {
                 unreachable!();
