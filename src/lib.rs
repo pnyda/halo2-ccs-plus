@@ -509,12 +509,11 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
                 column_index,
                 row_index,
             };
+
             if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).unwrap() {
                 if let Some(cell) = cell {
                     z[*z_index] = ARKWORKS::from_le_bytes_mod_order(&cell.to_repr());
                 }
-            } else {
-                unreachable!();
             }
         }
     }
@@ -530,8 +529,6 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
                 if let Some(cell) = cell {
                     z[*z_index] = ARKWORKS::from_le_bytes_mod_order(&cell.to_repr());
                 }
-            } else {
-                unreachable!();
             }
         }
     }
@@ -542,13 +539,18 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::primitives::P128Pow5T3 as OrchardNullifier;
     use ark_pallas::Fq;
+    use ark_std::rand::rngs::OsRng;
     use ff::Field;
     use folding_schemes::utils::vec::is_zero_vec;
+    use halo2_gadgets::poseidon::primitives::*;
+    use halo2_gadgets::poseidon::*;
     use halo2_proofs::circuit::AssignedCell;
     use halo2_proofs::circuit::Layouter;
     use halo2_proofs::circuit::SimpleFloorPlanner;
     use halo2_proofs::circuit::Value;
+    use halo2_proofs::dev::MockProver;
     use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper};
     use halo2_proofs::pasta::Fp;
     use halo2_proofs::plonk::Error;
@@ -675,6 +677,80 @@ mod tests {
         let z: Vec<ark_pallas::Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
 
         assert!(!is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_poseidon_success() -> Result<(), Error> {
+        let message = [Fp::random(OsRng), Fp::random(OsRng)];
+        let output = halo2_gadgets::poseidon::primitives::Hash::<
+            _,
+            OrchardNullifier,
+            ConstantLength<2>,
+            3,
+            2,
+        >::init()
+        .hash(message);
+
+        let k = 6;
+        let mut instance_column: Vec<Option<Fp>> = vec![None; 1 << k];
+        instance_column[0] = Some(output);
+
+        let circuit = HashCircuit::<OrchardNullifier, 3, 2, 2> {
+            message: Value::known(message),
+            _spec: PhantomData,
+        };
+
+        let mut meta = ConstraintSystem::<Fp>::default();
+        let config = HashCircuit::<OrchardNullifier, 3, 2, 2>::configure(&mut meta);
+        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
+        cell_dumper.instance[0][0] = Value::known(instance_column[0].unwrap());
+
+        <<HashCircuit<OrchardNullifier, 3, 2, 2> as halo2_proofs::plonk::Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
+            &mut cell_dumper,
+            &circuit,
+            config,
+            meta.constants.clone(),
+        )?;
+
+        let advice: Vec<&[Option<Fp>]> = cell_dumper
+            .advice
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let fixed: Vec<&[Option<Fp>]> = cell_dumper
+            .fixed
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let selectors: Vec<&[bool]> = cell_dumper
+            .selectors
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let cell_mapping = generate_cell_mapping(
+            &[&instance_column],
+            &advice,
+            &fixed,
+            &selectors,
+            &cell_dumper.copy_constraints,
+        );
+
+        let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
+        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
+            .into_iter()
+            .map(|expr| get_monomials(expr))
+            .collect();
+        let monomials: Vec<&[Monomial<Fq>]> = monomials.iter().map(|x| x.as_slice()).collect();
+        let ccs_instance: CCS<Fq> = generate_ccs_instance(&monomials, &cell_mapping);
+
+        let z: Vec<Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
+
+        let prover = MockProver::run(k, &circuit, vec![vec![output]]).unwrap();
+        assert_eq!(prover.verify(), Ok(()));
+
+        assert!(is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
 
         Ok(())
     }
@@ -855,6 +931,98 @@ mod tests {
             chip.expose_public(layouter.namespace(|| "out"), out_cell, 2)?;
 
             Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct HashConfig<const WIDTH: usize, const RATE: usize> {
+        pow5: Pow5Config<Fp, WIDTH, RATE>,
+        instance_column: Column<Instance>,
+    }
+
+    // Taken from https://github.com/zcash/halo2/blob/halo2_proofs-0.3.0/halo2_gadgets/src/poseidon/pow5.rs#L719
+    struct HashCircuit<
+        S: Spec<Fp, WIDTH, RATE>,
+        const WIDTH: usize,
+        const RATE: usize,
+        const L: usize,
+    > {
+        message: Value<[Fp; L]>,
+        _spec: PhantomData<S>,
+    }
+
+    impl<S: Spec<Fp, WIDTH, RATE>, const WIDTH: usize, const RATE: usize, const L: usize>
+        Circuit<Fp> for HashCircuit<S, WIDTH, RATE, L>
+    {
+        type Config = HashConfig<WIDTH, RATE>;
+        type FloorPlanner = SimpleFloorPlanner;
+
+        fn without_witnesses(&self) -> Self {
+            Self {
+                message: Value::unknown(),
+                _spec: PhantomData,
+            }
+        }
+
+        fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
+            let state = (0..WIDTH).map(|_| meta.advice_column()).collect::<Vec<_>>();
+            let partial_sbox = meta.advice_column();
+
+            let rc_a = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
+            let rc_b = (0..WIDTH).map(|_| meta.fixed_column()).collect::<Vec<_>>();
+
+            meta.enable_constant(rc_b[0]);
+
+            let pow5 = Pow5Chip::configure::<S>(
+                meta,
+                state.try_into().unwrap(),
+                partial_sbox,
+                rc_a.try_into().unwrap(),
+                rc_b.try_into().unwrap(),
+            );
+
+            let instance_column = meta.instance_column();
+            meta.enable_equality(instance_column);
+
+            Self::Config {
+                pow5,
+                instance_column,
+            }
+        }
+
+        fn synthesize(
+            &self,
+            config: Self::Config,
+            mut layouter: impl Layouter<Fp>,
+        ) -> Result<(), Error> {
+            let chip = Pow5Chip::construct(config.pow5.clone());
+
+            let message = layouter.assign_region(
+                || "load message",
+                |mut region| {
+                    let message_word = |i: usize| {
+                        let value = self.message.map(|message_vals| message_vals[i]);
+                        region.assign_advice(
+                            || format!("load message_{}", i),
+                            config.pow5.state[i],
+                            0,
+                            || value,
+                        )
+                    };
+
+                    let message: Result<Vec<_>, Error> = (0..L).map(message_word).collect();
+                    Ok(message?.try_into().unwrap())
+                },
+            )?;
+
+            let hasher =
+                halo2_gadgets::poseidon::Hash::<_, _, S, ConstantLength<L>, WIDTH, RATE>::init(
+                    chip,
+                    layouter.namespace(|| "init"),
+                )?;
+            let output = hasher.hash(layouter.namespace(|| "hash"), message)?;
+
+            layouter.constrain_instance(output.cell(), config.instance_column, 0)
         }
     }
 }
