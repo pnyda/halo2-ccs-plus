@@ -1,6 +1,7 @@
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
 use ark_ff::PrimeField;
+use ark_pallas::Fq;
 use ark_std::log2;
 use ff::PrimeField as _;
 use folding_schemes::arith::ccs::CCS;
@@ -19,7 +20,7 @@ fn test_monomials() -> Result<(), Error> {
     let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
     dbg!(&custom_gates);
 
-    let monomials: Vec<Vec<Monomial<Fp>>> = custom_gates
+    let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
         .into_iter()
         .map(|expr| get_monomials(expr))
         .collect();
@@ -114,56 +115,59 @@ impl PartialEq for Query {
 impl Eq for Query {}
 
 #[derive(Debug)]
-struct Monomial<F: Field> {
+struct Monomial<F: PrimeField> {
     coefficient: F,
     variables: Vec<Query>,
 }
 
-fn get_monomials<F: Field>(expr: Expression<F>) -> Vec<Monomial<F>> {
+fn get_monomials<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
+    expr: Expression<HALO2>,
+) -> Vec<Monomial<ARKWORKS>> {
     match expr {
         Expression::Constant(constant) => vec![Monomial {
-            coefficient: constant,
+            coefficient: ARKWORKS::from_le_bytes_mod_order(&constant.to_repr()),
             variables: vec![],
         }],
         Expression::Selector(query) => vec![Monomial {
-            coefficient: F::ONE,
+            coefficient: 1.into(),
             variables: vec![Query::Selector(query)],
         }],
         Expression::Advice(query) => vec![Monomial {
-            coefficient: F::ONE,
+            coefficient: 1.into(),
             variables: vec![Query::Advice(query)],
         }],
         Expression::Fixed(query) => vec![Monomial {
-            coefficient: F::ONE,
+            coefficient: 1.into(),
             variables: vec![Query::Fixed(query)],
         }],
         Expression::Instance(query) => vec![Monomial {
-            coefficient: F::ONE,
+            coefficient: 1.into(),
             variables: vec![Query::Instance(query)],
         }],
-        Expression::Negated(expr) => get_monomials(*expr)
+        Expression::Negated(expr) => get_monomials::<HALO2, ARKWORKS>(*expr)
             .into_iter()
             .map(|original| Monomial {
                 coefficient: original.coefficient.neg(),
                 variables: original.variables,
             })
             .collect(),
-        Expression::Scaled(expr, scalar) => get_monomials(*expr)
+        Expression::Scaled(expr, scalar) => get_monomials::<HALO2, ARKWORKS>(*expr)
             .into_iter()
             .map(|original| Monomial {
-                coefficient: original.coefficient * scalar,
+                coefficient: original.coefficient
+                    * ARKWORKS::from_le_bytes_mod_order(&scalar.to_repr()),
                 variables: original.variables,
             })
             .collect(),
         Expression::Sum(lhs, rhs) => {
             let mut result = Vec::new();
-            result.extend(get_monomials(*lhs));
-            result.extend(get_monomials(*rhs));
+            result.extend(get_monomials::<HALO2, ARKWORKS>(*lhs));
+            result.extend(get_monomials::<HALO2, ARKWORKS>(*rhs));
             result
         }
         Expression::Product(lhs, rhs) => {
-            let lhs_monomials = get_monomials(*lhs);
-            let rhs_monomials = get_monomials(*rhs);
+            let lhs_monomials = get_monomials::<HALO2, ARKWORKS>(*lhs);
+            let rhs_monomials = get_monomials::<HALO2, ARKWORKS>(*rhs);
             let mut result = Vec::new();
 
             for lhs_monomial in lhs_monomials.iter() {
@@ -560,7 +564,7 @@ fn generate_mj<F: PrimeField>(
 // Right now it only supports single custom gate
 // TODO: Support multiple custom gates
 fn generate_ccs_instance<F: PrimeField>(
-    monomials: &[Monomial<Fp>],
+    monomials: &[Monomial<F>],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
 ) -> CCS<F> {
     let table_height = cell_mapping
@@ -601,7 +605,7 @@ fn generate_ccs_instance<F: PrimeField>(
 
     let c: Vec<F> = monomials
         .iter()
-        .map(|monomial| F::from_le_bytes_mod_order(&monomial.coefficient.to_repr()))
+        .map(|monomial| monomial.coefficient)
         .collect();
     let S: Vec<Vec<usize>> = monomials
         .iter()
@@ -696,6 +700,7 @@ fn generate_z<F: PrimeField>(
 
 #[cfg(test)]
 mod tests {
+    use ark_pallas::Fq;
     use folding_schemes::utils::vec::is_zero_vec;
     use halo2_proofs::plonk::Error;
 
@@ -704,7 +709,7 @@ mod tests {
     #[test]
     fn test_fibonacci_satisfiability() -> Result<(), Error> {
         let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
-        let monomials: Vec<Vec<Monomial<Fp>>> = custom_gates
+        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
             .into_iter()
             .map(|expr| get_monomials(expr))
             .collect();
