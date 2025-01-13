@@ -376,7 +376,7 @@ fn generate_mj<F: ark_ff::PrimeField>(
 // Right now it only supports single custom gate
 // TODO: Support multiple custom gates
 fn generate_ccs_instance<F: ark_ff::PrimeField>(
-    monomials: &[Monomial<F>],
+    custom_gates: &[&[Monomial<F>]],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
 ) -> CCS<F> {
     let table_height = cell_mapping
@@ -403,36 +403,67 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
         })
         .sum();
 
-    // Remove duplication
-    let mut m_map: HashMap<Query, SparseMatrix<F>> = HashMap::new();
-    for monomial in monomials {
-        for query in monomial.variables.iter() {
-            m_map.insert(
-                *query,
-                generate_mj(*query, table_height, z_height, &cell_mapping),
-            );
+    // A map from (custom gate ID, queried column type, queried column index, rotation) -> M_j
+    let mut m_map: HashMap<(usize, Query), SparseMatrix<F>> = HashMap::new();
+    for (gate_index, monomials) in custom_gates.iter().enumerate() {
+        for monomial in monomials.iter() {
+            for query in monomial.variables.iter() {
+                // Shift the m_j down
+
+                // M_j for first gate would look like
+                // |100|
+                // |010|
+                // |001|
+                // |000|
+                // |000|
+                // |000|
+
+                // M_j for second gate would look like
+                // |000|
+                // |000|
+                // |000|
+                // |100|
+                // |010|
+                // |001|
+
+                let mut mj = generate_mj(*query, table_height, z_height, &cell_mapping);
+                mj.n_rows = custom_gates.len() * table_height;
+
+                let y_offset = gate_index * table_height;
+                mj.coeffs = [vec![vec![]; y_offset], mj.coeffs].concat();
+
+                m_map.insert((gate_index, *query), mj);
+            }
         }
     }
-    let m_pair: Vec<(Query, SparseMatrix<F>)> = m_map.into_iter().collect();
+    let m_pair: Vec<((usize, Query), SparseMatrix<F>)> = m_map.into_iter().collect();
 
-    let c: Vec<F> = monomials
+    let c: Vec<F> = custom_gates
         .iter()
-        .map(|monomial| monomial.coefficient)
+        .flat_map(|monomials| monomials.iter().map(|monomial| monomial.coefficient))
         .collect();
-    let S: Vec<Vec<usize>> = monomials
+    let S: Vec<Vec<usize>> = custom_gates
         .iter()
-        .map(|monomial| {
-            monomial
-                .variables
+        .enumerate()
+        .flat_map(|(gate_index1, monomials)| {
+            monomials
                 .iter()
-                .map(|query1| {
-                    let j = m_pair
+                .map(|monomial| {
+                    monomial
+                        .variables
                         .iter()
-                        .position(|(query2, _)| query1 == query2)
-                        .unwrap();
-                    j
+                        .map(|query1| {
+                            let j = m_pair
+                                .iter()
+                                .position(|((gate_index2, query2), _)| {
+                                    gate_index1 == *gate_index2 && query1 == query2
+                                })
+                                .unwrap();
+                            j
+                        })
+                        .collect()
                 })
-                .collect()
+                .collect::<Vec<_>>()
         })
         .collect();
     let M: Vec<SparseMatrix<F>> = m_pair.into_iter().map(|(_, mat)| mat).collect();
@@ -531,6 +562,7 @@ mod tests {
             .into_iter()
             .map(|expr| get_monomials(expr))
             .collect();
+        let monomials: Vec<&[Monomial<Fq>]> = monomials.iter().map(|x| x.as_slice()).collect();
 
         let k = 4;
         let mut meta = ConstraintSystem::<Fp>::default();
@@ -577,7 +609,7 @@ mod tests {
             &selectors,
             &cell_dumper.copy_constraints,
         );
-        let ccs_instance: CCS<ark_pallas::Fq> = generate_ccs_instance(&monomials[0], &cell_mapping);
+        let ccs_instance: CCS<ark_pallas::Fq> = generate_ccs_instance(&monomials, &cell_mapping);
         let z: Vec<ark_pallas::Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
 
         assert!(is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
@@ -592,6 +624,7 @@ mod tests {
             .into_iter()
             .map(|expr| get_monomials(expr))
             .collect();
+        let monomials: Vec<&[Monomial<Fq>]> = monomials.iter().map(|x| x.as_slice()).collect();
 
         let k = 4;
         let mut meta = ConstraintSystem::<Fp>::default();
@@ -638,7 +671,7 @@ mod tests {
             &selectors,
             &cell_dumper.copy_constraints,
         );
-        let ccs_instance: CCS<ark_pallas::Fq> = generate_ccs_instance(&monomials[0], &cell_mapping);
+        let ccs_instance: CCS<ark_pallas::Fq> = generate_ccs_instance(&monomials, &cell_mapping);
         let z: Vec<ark_pallas::Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
 
         assert!(!is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
