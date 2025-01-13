@@ -633,7 +633,7 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
         l: num_instance_cells,
         t: M.len(),
         q: S.len(),
-        d: 2, // TODO: Calculate legit d
+        d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(1),
         s: log2(table_height) as usize,
         s_prime: log2(z_height) as usize,
         M: M,
