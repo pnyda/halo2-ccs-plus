@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 use ark_std::log2;
 use folding_schemes::arith::ccs::CCS;
 use folding_schemes::utils::vec::SparseMatrix;
