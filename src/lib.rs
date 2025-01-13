@@ -502,8 +502,8 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
     let mut z: Vec<ARKWORKS> = vec![0.into(); z_height];
     z[0] = 1.into();
 
-    for (column_index, column) in advice.into_iter().enumerate() {
-        for (row_index, cell) in column.into_iter().enumerate() {
+    for (column_index, column) in advice.into_iter().enumerate().rev() {
+        for (row_index, cell) in column.into_iter().enumerate().rev() {
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Advice,
                 column_index,
@@ -518,8 +518,8 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
         }
     }
 
-    for (column_index, column) in instance.into_iter().enumerate() {
-        for (row_index, cell) in column.into_iter().enumerate() {
+    for (column_index, column) in instance.into_iter().enumerate().rev() {
+        for (row_index, cell) in column.into_iter().enumerate().rev() {
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Instance,
                 column_index,
