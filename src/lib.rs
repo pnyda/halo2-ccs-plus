@@ -1,58 +1,11 @@
-// Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
-
-use ark_ff::PrimeField;
-use ark_pallas::Fq;
 use ark_std::log2;
-use ff::Field;
-use ff::PrimeField as _;
 use folding_schemes::arith::ccs::CCS;
 use folding_schemes::utils::vec::SparseMatrix;
-use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper, CopyConstraint};
-use halo2_proofs::pasta::Fp;
-use halo2_proofs::{circuit::*, plonk::*, poly::Rotation};
+use halo2_proofs::dump::CopyConstraint;
+use halo2_proofs::plonk::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-
-#[test]
-fn test_monomials() -> Result<(), Error> {
-    let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
-    dbg!(&custom_gates);
-
-    let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
-        .into_iter()
-        .map(|expr| get_monomials(expr))
-        .collect();
-    dbg!(monomials);
-
-    let k = 4;
-    let mut meta = ConstraintSystem::<Fp>::default();
-    let config = MyCircuit::configure(&mut meta);
-
-    let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
-    cell_dumper.instance[0][0] = Value::known(1.into());
-    cell_dumper.instance[0][1] = Value::known(1.into());
-    cell_dumper.instance[0][2] = Value::known(55.into());
-
-    let circuit = MyCircuit(PhantomData);
-    <<MyCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
-        &mut cell_dumper,
-        &circuit,
-        config,
-        meta.constants.clone(),
-    )?;
-
-    dbg!(cell_dumper);
-    dbg!(dump_gates::<Fp, MyCircuit<Fp>>());
-    dbg!(dump_lookups::<Fp, MyCircuit<Fp>>());
-
-    // let ccs = CCS {
-    //     M: generate_m(monomials, constant_columns)
-    // };
-
-    Ok(())
-}
 
 #[derive(Debug, Clone, Copy)]
 enum Query {
@@ -115,7 +68,7 @@ impl PartialEq for Query {
 impl Eq for Query {}
 
 #[derive(Debug)]
-struct Monomial<F: PrimeField> {
+struct Monomial<F: ark_ff::PrimeField> {
     coefficient: F,
     variables: Vec<Query>,
 }
@@ -188,150 +141,8 @@ fn get_monomials<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::Prime
     }
 }
 
-#[derive(Debug, Clone)]
-struct FibonacciConfig {
-    advice: Column<Advice>,
-    selector: Selector,
-    instance: Column<Instance>,
-}
-
-#[derive(Debug, Clone)]
-struct FibonacciChip<F: Field> {
-    config: FibonacciConfig,
-    _marker: PhantomData<F>,
-}
-
-impl<F: Field> FibonacciChip<F> {
-    pub fn construct(config: FibonacciConfig) -> Self {
-        Self {
-            config,
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn configure(
-        meta: &mut ConstraintSystem<F>,
-        advice: Column<Advice>,
-        instance: Column<Instance>,
-    ) -> FibonacciConfig {
-        let selector = meta.selector();
-
-        meta.enable_equality(advice);
-        meta.enable_equality(instance);
-
-        meta.create_gate("add", |meta| {
-            //
-            // advice | selector
-            //   a    |   s
-            //   b    |
-            //   c    |
-            //
-            let s = meta.query_selector(selector);
-            let a = meta.query_advice(advice, Rotation::cur());
-            let b = meta.query_advice(advice, Rotation::next());
-            let c = meta.query_advice(advice, Rotation(2));
-
-            vec![s * (a + b - c)]
-        });
-
-        FibonacciConfig {
-            advice,
-            selector,
-            instance,
-        }
-    }
-
-    pub fn assign(
-        &self,
-        mut layouter: impl Layouter<F>,
-        nrows: usize,
-    ) -> Result<AssignedCell<F, F>, Error> {
-        layouter.assign_region(
-            || "entire fibonacci table",
-            |mut region| {
-                self.config.selector.enable(&mut region, 0)?;
-                self.config.selector.enable(&mut region, 1)?;
-
-                let mut a_cell = region.assign_advice_from_instance(
-                    || "1",
-                    self.config.instance,
-                    0,
-                    self.config.advice,
-                    0,
-                )?;
-                let mut b_cell = region.assign_advice_from_instance(
-                    || "1",
-                    self.config.instance,
-                    1,
-                    self.config.advice,
-                    1,
-                )?;
-
-                for row in 2..nrows {
-                    if row < nrows - 2 {
-                        self.config.selector.enable(&mut region, row)?;
-                    }
-
-                    let c_cell = region.assign_advice(
-                        || "advice",
-                        self.config.advice,
-                        row,
-                        || a_cell.value().copied() + b_cell.value(),
-                    )?;
-
-                    a_cell = b_cell;
-                    b_cell = c_cell;
-                }
-
-                Ok(b_cell)
-            },
-        )
-    }
-
-    pub fn expose_public(
-        &self,
-        mut layouter: impl Layouter<F>,
-        cell: AssignedCell<F, F>,
-        row: usize,
-    ) -> Result<(), Error> {
-        layouter.constrain_instance(cell.cell(), self.config.instance, row)
-    }
-}
-
-#[derive(Default)]
-struct MyCircuit<F>(PhantomData<F>);
-
-impl<F: Field> Circuit<F> for MyCircuit<F> {
-    type Config = FibonacciConfig;
-    type FloorPlanner = SimpleFloorPlanner;
-
-    fn without_witnesses(&self) -> Self {
-        Self::default()
-    }
-
-    fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
-        let advice = meta.advice_column();
-        let instance = meta.instance_column();
-        FibonacciChip::configure(meta, advice, instance)
-    }
-
-    fn synthesize(
-        &self,
-        config: Self::Config,
-        mut layouter: impl Layouter<F>,
-    ) -> Result<(), Error> {
-        let chip = FibonacciChip::construct(config);
-
-        let out_cell = chip.assign(layouter.namespace(|| "entire table"), 10)?;
-
-        chip.expose_public(layouter.namespace(|| "out"), out_cell, 2)?;
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
-enum CCSValue<F: PrimeField> {
+enum CCSValue<F: ark_ff::PrimeField> {
     InsideZ(usize), // z_index
     InsideM(F),     // fixed value
 }
@@ -506,7 +317,7 @@ fn generate_deduplication_map(
     deduplication_map
 }
 
-fn generate_mj<F: PrimeField>(
+fn generate_mj<F: ark_ff::PrimeField>(
     query: Query,
     table_height: usize,
     z_height: usize,
@@ -563,7 +374,7 @@ fn generate_mj<F: PrimeField>(
 
 // Right now it only supports single custom gate
 // TODO: Support multiple custom gates
-fn generate_ccs_instance<F: PrimeField>(
+fn generate_ccs_instance<F: ark_ff::PrimeField>(
     monomials: &[Monomial<F>],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
 ) -> CCS<F> {
@@ -698,11 +509,19 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
 
 #[cfg(test)]
 mod tests {
-    use ark_pallas::Fq;
-    use folding_schemes::utils::vec::is_zero_vec;
-    use halo2_proofs::plonk::Error;
-
     use super::*;
+    use ark_pallas::Fq;
+    use ff::Field;
+    use folding_schemes::utils::vec::is_zero_vec;
+    use halo2_proofs::circuit::AssignedCell;
+    use halo2_proofs::circuit::Layouter;
+    use halo2_proofs::circuit::SimpleFloorPlanner;
+    use halo2_proofs::circuit::Value;
+    use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper};
+    use halo2_proofs::pasta::Fp;
+    use halo2_proofs::plonk::Error;
+    use halo2_proofs::poly::Rotation;
+    use std::marker::PhantomData;
 
     #[test]
     fn test_fibonacci_satisfiability() -> Result<(), Error> {
@@ -824,5 +643,184 @@ mod tests {
         assert!(!is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_monomials() -> Result<(), Error> {
+        let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
+        dbg!(&custom_gates);
+
+        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
+            .into_iter()
+            .map(|expr| get_monomials(expr))
+            .collect();
+        dbg!(monomials);
+
+        let k = 4;
+        let mut meta = ConstraintSystem::<Fp>::default();
+        let config = MyCircuit::configure(&mut meta);
+
+        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
+        cell_dumper.instance[0][0] = Value::known(1.into());
+        cell_dumper.instance[0][1] = Value::known(1.into());
+        cell_dumper.instance[0][2] = Value::known(55.into());
+
+        let circuit = MyCircuit(PhantomData);
+        <<MyCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
+            &mut cell_dumper,
+            &circuit,
+            config,
+            meta.constants.clone(),
+        )?;
+
+        dbg!(cell_dumper);
+        dbg!(dump_gates::<Fp, MyCircuit<Fp>>());
+        dbg!(dump_lookups::<Fp, MyCircuit<Fp>>());
+
+        Ok(())
+    }
+
+    // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
+
+    #[derive(Debug, Clone)]
+    struct FibonacciConfig {
+        advice: Column<Advice>,
+        selector: Selector,
+        instance: Column<Instance>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct FibonacciChip<F: Field> {
+        config: FibonacciConfig,
+        _marker: PhantomData<F>,
+    }
+
+    impl<F: Field> FibonacciChip<F> {
+        pub fn construct(config: FibonacciConfig) -> Self {
+            Self {
+                config,
+                _marker: PhantomData,
+            }
+        }
+
+        pub fn configure(
+            meta: &mut ConstraintSystem<F>,
+            advice: Column<Advice>,
+            instance: Column<Instance>,
+        ) -> FibonacciConfig {
+            let selector = meta.selector();
+
+            meta.enable_equality(advice);
+            meta.enable_equality(instance);
+
+            meta.create_gate("add", |meta| {
+                //
+                // advice | selector
+                //   a    |   s
+                //   b    |
+                //   c    |
+                //
+                let s = meta.query_selector(selector);
+                let a = meta.query_advice(advice, Rotation::cur());
+                let b = meta.query_advice(advice, Rotation::next());
+                let c = meta.query_advice(advice, Rotation(2));
+
+                vec![s * (a + b - c)]
+            });
+
+            FibonacciConfig {
+                advice,
+                selector,
+                instance,
+            }
+        }
+
+        pub fn assign(
+            &self,
+            mut layouter: impl Layouter<F>,
+            nrows: usize,
+        ) -> Result<AssignedCell<F, F>, Error> {
+            layouter.assign_region(
+                || "entire fibonacci table",
+                |mut region| {
+                    self.config.selector.enable(&mut region, 0)?;
+                    self.config.selector.enable(&mut region, 1)?;
+
+                    let mut a_cell = region.assign_advice_from_instance(
+                        || "1",
+                        self.config.instance,
+                        0,
+                        self.config.advice,
+                        0,
+                    )?;
+                    let mut b_cell = region.assign_advice_from_instance(
+                        || "1",
+                        self.config.instance,
+                        1,
+                        self.config.advice,
+                        1,
+                    )?;
+
+                    for row in 2..nrows {
+                        if row < nrows - 2 {
+                            self.config.selector.enable(&mut region, row)?;
+                        }
+
+                        let c_cell = region.assign_advice(
+                            || "advice",
+                            self.config.advice,
+                            row,
+                            || a_cell.value().copied() + b_cell.value(),
+                        )?;
+
+                        a_cell = b_cell;
+                        b_cell = c_cell;
+                    }
+
+                    Ok(b_cell)
+                },
+            )
+        }
+
+        pub fn expose_public(
+            &self,
+            mut layouter: impl Layouter<F>,
+            cell: AssignedCell<F, F>,
+            row: usize,
+        ) -> Result<(), Error> {
+            layouter.constrain_instance(cell.cell(), self.config.instance, row)
+        }
+    }
+
+    #[derive(Default)]
+    struct MyCircuit<F>(PhantomData<F>);
+
+    impl<F: Field> Circuit<F> for MyCircuit<F> {
+        type Config = FibonacciConfig;
+        type FloorPlanner = SimpleFloorPlanner;
+
+        fn without_witnesses(&self) -> Self {
+            Self::default()
+        }
+
+        fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
+            let advice = meta.advice_column();
+            let instance = meta.instance_column();
+            FibonacciChip::configure(meta, advice, instance)
+        }
+
+        fn synthesize(
+            &self,
+            config: Self::Config,
+            mut layouter: impl Layouter<F>,
+        ) -> Result<(), Error> {
+            let chip = FibonacciChip::construct(config);
+
+            let out_cell = chip.assign(layouter.namespace(|| "entire table"), 10)?;
+
+            chip.expose_public(layouter.namespace(|| "out"), out_cell, 2)?;
+
+            Ok(())
+        }
     }
 }
