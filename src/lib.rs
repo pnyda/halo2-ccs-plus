@@ -327,23 +327,21 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum CCSValue {
+enum CCSValue<F: PrimeField> {
     InsideZ(usize), // z_index
-    InsideM(Fp),    // fixed value
-                    // TODO: Support generic field
-                    // TODO: Use arkworks::Field instead of halo2::Field
+    InsideM(F),     // fixed value
 }
 
 // A mapping from absolute cell position in the original table (column_type, column_index, row_index)
 // to the position in Z
-fn generate_cell_mapping(
+fn generate_cell_mapping<F: PrimeField>(
     instance: &[&[Option<Fp>]],
     advice: &[&[Option<Fp>]],
     fixed: &[&[Option<Fp>]],
     selectors: &[&[bool]],
     copy_constraints: &[CopyConstraint],
-) -> HashMap<AbsoluteCellPosition, CCSValue> {
-    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue> = HashMap::new();
+) -> HashMap<AbsoluteCellPosition, CCSValue<F>> {
+    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<F>> = HashMap::new();
 
     for (column_index, column) in instance.into_iter().enumerate() {
         for (row_index, _) in column.into_iter().enumerate() {
@@ -372,7 +370,7 @@ fn generate_cell_mapping(
     for (column_index, column) in fixed.into_iter().enumerate() {
         for (row_index, cell) in column.into_iter().enumerate() {
             // TODO: Is it okay to initialize unassigned fixed cell with 0?
-            let value = cell.unwrap_or(Fp::ZERO);
+            let value = F::from_le_bytes_mod_order(&cell.unwrap_or(Fp::ZERO).to_repr());
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Fixed,
                 column_index,
@@ -508,7 +506,7 @@ fn generate_mj<F: PrimeField>(
     query: Query,
     table_height: usize,
     z_height: usize,
-    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue>,
+    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
 ) -> SparseMatrix<F> {
     let mut mj = SparseMatrix::empty();
     mj.n_cols = z_height;
@@ -549,13 +547,9 @@ fn generate_mj<F: PrimeField>(
             }
             CCSValue::InsideM(value) => {
                 // If the query refers to an fixed or selector cell
-
-                // TODO: Do this somewhere else.
-                let value = F::from_le_bytes_mod_order(&value.to_repr());
-
                 // mj[y, 0] = value
                 mj.coeffs.push(Vec::new());
-                mj.coeffs.last_mut().unwrap().push((value, 0));
+                mj.coeffs.last_mut().unwrap().push((*value, 0));
             }
         }
     }
@@ -565,9 +559,9 @@ fn generate_mj<F: PrimeField>(
 
 // Right now it only supports single custom gate
 // TODO: Support multiple custom gates
-fn generate_ccs_instance<F: ark_ff::PrimeField>(
+fn generate_ccs_instance<F: PrimeField>(
     monomials: &[Monomial<Fp>],
-    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue>,
+    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
 ) -> CCS<F> {
     let table_height = cell_mapping
         .keys()
@@ -642,10 +636,10 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
     }
 }
 
-fn generate_z<F: ark_ff::PrimeField>(
+fn generate_z<F: PrimeField>(
     instance: &[&[Option<Fp>]],
     advice: &[&[Option<Fp>]],
-    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue>,
+    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
 ) -> Vec<F> {
     let z_height = cell_mapping
         .values()
