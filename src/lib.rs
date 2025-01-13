@@ -764,4 +764,65 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_fibonacci_unsatisfied() -> Result<(), Error> {
+        let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
+        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
+            .into_iter()
+            .map(|expr| get_monomials(expr))
+            .collect();
+
+        let k = 4;
+        let mut meta = ConstraintSystem::<Fp>::default();
+        let config = MyCircuit::configure(&mut meta);
+
+        let mut instance_column: Vec<Option<Fp>> = vec![None; 1 << k];
+        instance_column[0] = Some(1.into());
+        instance_column[1] = Some(1.into());
+        instance_column[2] = Some(54.into());
+
+        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
+        cell_dumper.instance[0][0] = Value::known(instance_column[0].unwrap());
+        cell_dumper.instance[0][1] = Value::known(instance_column[1].unwrap());
+        cell_dumper.instance[0][2] = Value::known(instance_column[2].unwrap());
+
+        let circuit = MyCircuit(PhantomData);
+        <<MyCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
+            &mut cell_dumper,
+            &circuit,
+            config,
+            meta.constants.clone(),
+        )?;
+
+        let advice: Vec<&[Option<Fp>]> = cell_dumper
+            .advice
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let fixed: Vec<&[Option<Fp>]> = cell_dumper
+            .fixed
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let selectors: Vec<&[bool]> = cell_dumper
+            .selectors
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+
+        let cell_mapping = generate_cell_mapping(
+            &[&instance_column],
+            &advice,
+            &fixed,
+            &selectors,
+            &cell_dumper.copy_constraints,
+        );
+        let ccs_instance: CCS<ark_pallas::Fq> = generate_ccs_instance(&monomials[0], &cell_mapping);
+        let z: Vec<ark_pallas::Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
+
+        assert!(!is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
+
+        Ok(())
+    }
 }
