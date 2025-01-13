@@ -348,7 +348,7 @@ fn generate_cell_mapping(
     instance: &[&[Option<Fp>]],
     advice: &[&[Option<Fp>]],
     fixed: &[&[Option<Fp>]],
-    selectors: &[&[Option<bool>]],
+    selectors: &[&[bool]],
     copy_constraints: &[CopyConstraint],
 ) -> HashMap<AbsoluteCellPosition, CCSValue> {
     let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue> = HashMap::new();
@@ -392,8 +392,7 @@ fn generate_cell_mapping(
 
     for (column_index, column) in selectors.into_iter().enumerate() {
         for (row_index, cell) in column.into_iter().enumerate() {
-            // TODO: Is it okay to initialize unassigned selector cell with false?
-            let value = cell.unwrap_or(false).into();
+            let value = (*cell).into();
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Selector,
                 column_index,
@@ -579,9 +578,17 @@ fn generate_mj<F: PrimeField>(
 fn generate_ccs_instance<F: ark_ff::PrimeField>(
     monomials: &[Monomial<Fp>],
     table_height: usize,
-    witness_size: usize,
-    cell_mapping: HashMap<AbsoluteCellPosition, CCSValue>,
+    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue>,
 ) -> CCS<F> {
+    let witness_size = cell_mapping
+        .values()
+        .map(|ccs_value| match ccs_value {
+            CCSValue::InsideZ(z_index) => *z_index + 1,
+            CCSValue::InsideM(_) => 0,
+        })
+        .max()
+        .expect("|Z| must be above 2");
+
     // Remove duplication
     let mut m_map: HashMap<Query, SparseMatrix<F>> = HashMap::new();
     for monomial in monomials {
@@ -634,7 +641,7 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
 fn generate_z<F: ark_ff::PrimeField>(
     instance: &[&[Option<Fp>]],
     advice: &[&[Option<Fp>]],
-    cell_mapping: HashMap<AbsoluteCellPosition, CCSValue>,
+    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue>,
 ) -> Vec<F> {
     let z_height = cell_mapping
         .values()
@@ -692,4 +699,77 @@ fn generate_z<F: ark_ff::PrimeField>(
     z.into_iter()
         .map(|witness| witness.expect("There was no unassigned cell in the original Plonkish table but there is one in CCS. Must be a bug?"))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use folding_schemes::utils::vec::is_zero_vec;
+    use halo2_proofs::plonk::Error;
+
+    use super::*;
+
+    #[test]
+    fn test_fibonacci_satisfiability() -> Result<(), Error> {
+        let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
+        dbg!(&custom_gates);
+
+        let monomials: Vec<Vec<Monomial<Fp>>> = custom_gates
+            .into_iter()
+            .map(|expr| get_monomials(expr))
+            .collect();
+        dbg!(&monomials);
+
+        let k = 4;
+        let mut meta = ConstraintSystem::<Fp>::default();
+        let config = MyCircuit::configure(&mut meta);
+
+        let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
+        cell_dumper.instance[0][0] = Value::known(instance_column[0]);
+        cell_dumper.instance[0][1] = Value::known(instance_column[1]);
+        cell_dumper.instance[0][2] = Value::known(instance_column[2]);
+
+        let circuit = MyCircuit(PhantomData);
+        <<MyCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
+            &mut cell_dumper,
+            &circuit,
+            config,
+            meta.constants.clone(),
+        )?;
+
+        let instance_column: Vec<Option<Fp>> =
+            instance_column.into_iter().map(|x| Some(x)).collect();
+        let advice: Vec<&[Option<Fp>]> = cell_dumper
+            .advice
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let fixed: Vec<&[Option<Fp>]> = cell_dumper
+            .fixed
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let selectors: Vec<&[bool]> = cell_dumper
+            .selectors
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+
+        let cell_mapping = generate_cell_mapping(
+            &[instance_column.as_slice()],
+            &advice,
+            &fixed,
+            &selectors,
+            &cell_dumper.copy_constraints,
+        );
+        let ccs_instance: CCS<ark_pallas::Fq> =
+            generate_ccs_instance(&monomials[0], advice[0].len(), &cell_mapping);
+        let z: Vec<ark_pallas::Fq> =
+            generate_z(&[instance_column.as_slice()], &advice, &cell_mapping);
+
+        assert!(is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
+
+        Ok(())
+    }
 }

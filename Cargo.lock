@@ -163,6 +163,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-pallas"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c676d42c65f0b2d334fc0ae72a422de2e62ed75beb3022050c0e8a81f6ccc0f"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
+]
+
+[[package]]
 name = "ark-poly"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -568,6 +579,7 @@ name = "halo2ccs"
 version = "0.1.0"
 dependencies = [
  "ark-ff",
+ "ark-pallas",
  "ark-std",
  "ff",
  "folding-schemes",
