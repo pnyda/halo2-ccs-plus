@@ -316,16 +316,24 @@ fn deduplicate_witness<F: ark_ff::PrimeField>(
 fn clean_unused_z<F: ark_ff::PrimeField>(
     cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
 ) {
-    let mut z_index_remap: HashMap<usize, usize> = HashMap::new();
-    for ccs_value in cell_mapping.values_mut() {
-        if let CCSValue::InsideZ(old_z_index) = ccs_value {
-            if let Some(new_z_index) = z_index_remap.get(old_z_index).copied() {
-                *old_z_index = new_z_index;
-            } else {
-                let new_z_index = z_index_remap.len() + 1; // +1 because we shouldn't assign witness at Z[0]
-                z_index_remap.insert(*old_z_index, new_z_index);
-                *old_z_index = new_z_index;
-            }
+    let mut used_z_index: Vec<&mut usize> = cell_mapping
+        .values_mut()
+        .filter_map(|ccs_value| match ccs_value {
+            CCSValue::InsideM(_) => None,
+            CCSValue::InsideZ(z_index) => Some(z_index),
+        })
+        .collect();
+    used_z_index.sort();
+
+    let mut z_height = 1;
+    let mut last_z_index = 0;
+    for z_index in used_z_index.into_iter() {
+        if *z_index == last_z_index {
+            *z_index = z_height - 1;
+        } else {
+            last_z_index = *z_index;
+            *z_index = z_height;
+            z_height += 1;
         }
     }
 }
