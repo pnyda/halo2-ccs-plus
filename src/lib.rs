@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_fibonacci_satisfiability() -> Result<(), Error> {
-        let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
+        let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
         let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
             .into_iter()
             .map(|expr| get_monomials(expr))
@@ -568,7 +568,7 @@ mod tests {
 
         let k = 4;
         let mut meta = ConstraintSystem::<Fp>::default();
-        let config = MyCircuit::configure(&mut meta);
+        let config = FibonacciCircuit::configure(&mut meta);
 
         let mut instance_column: Vec<Option<Fp>> = vec![None; 1 << k];
         instance_column[0] = Some(1.into());
@@ -580,8 +580,8 @@ mod tests {
         cell_dumper.instance[0][1] = Value::known(instance_column[1].unwrap());
         cell_dumper.instance[0][2] = Value::known(instance_column[2].unwrap());
 
-        let circuit = MyCircuit(PhantomData);
-        <<MyCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
+        let circuit = FibonacciCircuit(PhantomData);
+        <<FibonacciCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
             &mut cell_dumper,
             &circuit,
             config,
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn test_fibonacci_unsatisfied() -> Result<(), Error> {
-        let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
+        let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
         let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
             .into_iter()
             .map(|expr| get_monomials(expr))
@@ -630,7 +630,7 @@ mod tests {
 
         let k = 4;
         let mut meta = ConstraintSystem::<Fp>::default();
-        let config = MyCircuit::configure(&mut meta);
+        let config = FibonacciCircuit::configure(&mut meta);
 
         let mut instance_column: Vec<Option<Fp>> = vec![None; 1 << k];
         instance_column[0] = Some(1.into());
@@ -642,8 +642,8 @@ mod tests {
         cell_dumper.instance[0][1] = Value::known(instance_column[1].unwrap());
         cell_dumper.instance[0][2] = Value::known(instance_column[2].unwrap());
 
-        let circuit = MyCircuit(PhantomData);
-        <<MyCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
+        let circuit = FibonacciCircuit(PhantomData);
+        <<FibonacciCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
             &mut cell_dumper,
             &circuit,
             config,
@@ -737,7 +737,7 @@ mod tests {
             &cell_dumper.copy_constraints,
         );
 
-        let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
+        let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
         let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
             .into_iter()
             .map(|expr| get_monomials(expr))
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn test_monomials() -> Result<(), Error> {
-        let custom_gates = dump_gates::<Fp, MyCircuit<Fp>>()?;
+        let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
         dbg!(&custom_gates);
 
         let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
@@ -768,15 +768,15 @@ mod tests {
 
         let k = 4;
         let mut meta = ConstraintSystem::<Fp>::default();
-        let config = MyCircuit::configure(&mut meta);
+        let config = FibonacciCircuit::configure(&mut meta);
 
         let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
         cell_dumper.instance[0][0] = Value::known(1.into());
         cell_dumper.instance[0][1] = Value::known(1.into());
         cell_dumper.instance[0][2] = Value::known(55.into());
 
-        let circuit = MyCircuit(PhantomData);
-        <<MyCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
+        let circuit = FibonacciCircuit(PhantomData);
+        <<FibonacciCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
             &mut cell_dumper,
             &circuit,
             config,
@@ -784,8 +784,8 @@ mod tests {
         )?;
 
         dbg!(cell_dumper);
-        dbg!(dump_gates::<Fp, MyCircuit<Fp>>());
-        dbg!(dump_lookups::<Fp, MyCircuit<Fp>>());
+        dbg!(dump_gates::<Fp, FibonacciCircuit<Fp>>());
+        dbg!(dump_lookups::<Fp, FibonacciCircuit<Fp>>());
 
         Ok(())
     }
@@ -903,9 +903,9 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MyCircuit<F>(PhantomData<F>);
+    struct FibonacciCircuit<F>(PhantomData<F>);
 
-    impl<F: Field> Circuit<F> for MyCircuit<F> {
+    impl<F: Field> Circuit<F> for FibonacciCircuit<F> {
         type Config = FibonacciConfig;
         type FloorPlanner = SimpleFloorPlanner;
 
