@@ -506,33 +506,26 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
     let mut z: Vec<ARKWORKS> = vec![0.into(); z_height];
     z[0] = 1.into();
 
-    for (column_index, column) in advice.into_iter().enumerate().rev() {
-        for (row_index, cell) in column.into_iter().enumerate().rev() {
-            let cell_position = AbsoluteCellPosition {
-                column_type: VirtualColumnType::Advice,
-                column_index,
-                row_index,
-            };
+    let mut cells: Vec<AbsoluteCellPosition> = cell_mapping.keys().copied().collect();
+    cells.sort();
+    cells.reverse();
+    // We need to sort and reverse here because
+    // when an element in Z represents more than 2 cells in the original Plonkish table due to copy constraints
+    // the value in AbsoluteCellPosition with less ordering should take precedence
 
-            if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).unwrap() {
-                if let Some(cell) = cell {
-                    z[*z_index] = ARKWORKS::from_le_bytes_mod_order(&cell.to_repr());
-                }
+    for cell_position in cells {
+        let cell_value = match cell_position.column_type {
+            VirtualColumnType::Advice => {
+                advice[cell_position.column_index][cell_position.row_index]
             }
-        }
-    }
-
-    for (column_index, column) in instance.into_iter().enumerate().rev() {
-        for (row_index, cell) in column.into_iter().enumerate().rev() {
-            let cell_position = AbsoluteCellPosition {
-                column_type: VirtualColumnType::Instance,
-                column_index,
-                row_index,
-            };
-            if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).unwrap() {
-                if let Some(cell) = cell {
-                    z[*z_index] = ARKWORKS::from_le_bytes_mod_order(&cell.to_repr());
-                }
+            VirtualColumnType::Instance => {
+                instance[cell_position.column_index][cell_position.row_index]
+            }
+            _ => continue,
+        };
+        if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).copied().unwrap() {
+            if let Some(cell_value) = cell_value {
+                z[z_index] = ARKWORKS::from_le_bytes_mod_order(&cell_value.to_repr());
             }
         }
     }
