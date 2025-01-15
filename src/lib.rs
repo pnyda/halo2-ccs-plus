@@ -573,7 +573,7 @@ mod tests {
     use std::marker::PhantomData;
 
     #[test]
-    fn test_fibonacci_satisfiability() -> Result<(), Error> {
+    fn test_fibonacci_success() -> Result<(), Error> {
         let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
         let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
             .into_iter()
@@ -629,13 +629,16 @@ mod tests {
         let ccs_instance: CCS<ark_pallas::Fq> = generate_ccs_instance(&monomials, &cell_mapping);
         let z: Vec<ark_pallas::Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
 
+        let instance_column = instance_column.into_iter().filter_map(|x| x).collect();
+        let prover = MockProver::run(k, &circuit, vec![instance_column]).unwrap();
+        assert!(prover.verify().is_ok());
         assert!(is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
 
         Ok(())
     }
 
     #[test]
-    fn test_fibonacci_unsatisfied() -> Result<(), Error> {
+    fn test_fibonacci_fail() -> Result<(), Error> {
         let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
         let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
             .into_iter()
@@ -691,6 +694,9 @@ mod tests {
         let ccs_instance: CCS<ark_pallas::Fq> = generate_ccs_instance(&monomials, &cell_mapping);
         let z: Vec<ark_pallas::Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
 
+        let instance_column = instance_column.into_iter().filter_map(|x| x).collect();
+        let prover = MockProver::run(k, &circuit, vec![instance_column]).unwrap();
+        assert!(prover.verify().is_err());
         assert!(!is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
 
         Ok(())
