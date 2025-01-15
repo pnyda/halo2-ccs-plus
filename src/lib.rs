@@ -393,8 +393,6 @@ fn generate_mj<F: ark_ff::PrimeField>(
     mj
 }
 
-// Right now it only supports single custom gate
-// TODO: Support multiple custom gates
 fn generate_ccs_instance<F: ark_ff::PrimeField>(
     custom_gates: &[&[Monomial<F>]],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
