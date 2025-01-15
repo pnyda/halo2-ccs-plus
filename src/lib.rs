@@ -741,7 +741,7 @@ mod tests {
             &cell_dumper.copy_constraints,
         );
 
-        let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
+        let custom_gates = dump_gates::<Fp, HashCircuit<OrchardNullifier, 3, 2, 2>>()?;
         let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
             .into_iter()
             .map(|expr| get_monomials(expr))
