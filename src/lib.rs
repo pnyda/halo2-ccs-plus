@@ -403,6 +403,8 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
         })
         .sum();
 
+    let m = custom_gates.len() * table_height;
+
     // A map from (custom gate ID, queried column type, queried column index, rotation) -> M_j
     let mut m_map: HashMap<(usize, Query), SparseMatrix<F>> = HashMap::new();
     for (gate_index, monomials) in custom_gates.iter().enumerate() {
@@ -427,10 +429,12 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
                 // |001|
 
                 let mut mj = generate_mj(*query, table_height, z_height, &cell_mapping);
-                mj.n_rows = custom_gates.len() * table_height;
+                mj.n_rows = m;
 
                 let y_offset = gate_index * table_height;
-                mj.coeffs = [vec![vec![]; y_offset], mj.coeffs].concat();
+                let mut new_coeffs = vec![vec![]; m];
+                new_coeffs[y_offset..(y_offset + mj.coeffs.len())].clone_from_slice(&mj.coeffs);
+                mj.coeffs = new_coeffs;
 
                 m_map.insert((gate_index, *query), mj);
             }
@@ -469,7 +473,7 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
     let M: Vec<SparseMatrix<F>> = m_pair.into_iter().map(|(_, mat)| mat).collect();
 
     CCS {
-        m: table_height,
+        m,
         n: z_height,
         l: num_instance_cells,
         t: M.len(),
