@@ -209,25 +209,8 @@ fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
     }
 
     // Next, incorporate the copy constraints into the mapping.
-    for (deduplicate_from, deduplicate_into) in generate_deduplication_map(copy_constraints) {
-        *cell_mapping.get_mut(&deduplicate_from).unwrap() =
-            cell_mapping.get(&deduplicate_into).copied().unwrap();
-    }
-
-    // The witness deduplication will make some z_index unused
-    // Thus we have to reassign z_index
-    let mut z_index_remap: HashMap<usize, usize> = HashMap::new();
-    for ccs_value in cell_mapping.values_mut() {
-        if let CCSValue::InsideZ(old_z_index) = ccs_value {
-            if let Some(new_z_index) = z_index_remap.get(old_z_index).copied() {
-                *old_z_index = new_z_index;
-            } else {
-                let new_z_index = z_index_remap.len() + 1; // +1 because we shouldn't assign witness at Z[0]
-                z_index_remap.insert(*old_z_index, new_z_index);
-                *old_z_index = new_z_index;
-            }
-        }
-    }
+    deduplicate_witness(&mut cell_mapping, copy_constraints);
+    clean_unused_z(&mut cell_mapping);
 
     cell_mapping
 }
@@ -283,39 +266,68 @@ impl PartialOrd for AbsoluteCellPosition {
     }
 }
 
-// A key-value map that represents the destination into which a cell gets deduplicated.
 // Cells with greater ordering will get deduplicated into cells with less ordering.
-fn generate_deduplication_map(
+fn deduplicate_witness<F: ark_ff::PrimeField>(
+    cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
     copy_constraints: &[CopyConstraint],
-) -> HashMap<AbsoluteCellPosition, AbsoluteCellPosition> {
-    let mut deduplication_map = HashMap::new();
+) {
+    let mut copy_constraints_sorted: Vec<(AbsoluteCellPosition, AbsoluteCellPosition)> =
+        copy_constraints
+            .iter()
+            .filter_map(|copy_constraint| {
+                let cell1 = AbsoluteCellPosition {
+                    column_type: copy_constraint.from_column_type.into(),
+                    column_index: copy_constraint.from_column_index,
+                    row_index: copy_constraint.from_row_index,
+                };
+                let cell2 = AbsoluteCellPosition {
+                    column_type: copy_constraint.to_column_type.into(),
+                    column_index: copy_constraint.to_column_index,
+                    row_index: copy_constraint.to_row_index,
+                };
 
-    for copy_constraint in copy_constraints.iter() {
-        let left = AbsoluteCellPosition {
-            column_type: copy_constraint.from_column_type.into(),
-            column_index: copy_constraint.from_column_index,
-            row_index: copy_constraint.from_row_index,
-        };
-        let right = AbsoluteCellPosition {
-            column_type: copy_constraint.to_column_type.into(),
-            column_index: copy_constraint.to_column_index,
-            row_index: copy_constraint.to_row_index,
-        };
+                // The first element of the tuple gets deduplicated into the second element of the tuple
+                match cell1.cmp(&cell2) {
+                    Ordering::Equal => None,
+                    Ordering::Less => Some((cell1, cell2)),
+                    Ordering::Greater => Some((cell2, cell1)),
+                }
+            })
+            .collect();
 
-        if let Some(pointer) = deduplication_map.get_mut(&left) {
-            *pointer = right.min(*pointer)
-        } else if left > right {
-            deduplication_map.insert(left, right);
-        }
+    // When there are copy constraints that states
+    // B = C
+    // B = A
+    // cell_mapping[C] should be z_index of A.
+    // We achieve this by sorting the copy constraints
+    // A <- B
+    // B <- C
+    // and applying witness deduplication for AbsoluteCellPosition with less ordering first
+    copy_constraints_sorted.sort();
 
-        if let Some(pointer) = deduplication_map.get_mut(&right) {
-            *pointer = left.min(*pointer)
-        } else if left < right {
-            deduplication_map.insert(right, left);
+    for (deduplicate_into, deduplicate_from) in copy_constraints_sorted.into_iter() {
+        *cell_mapping.get_mut(&deduplicate_from).unwrap() =
+            cell_mapping.get(&deduplicate_into).copied().unwrap();
+    }
+}
+
+// The witness deduplication will make some z_index unused
+// Thus we have to reassign z_index
+fn clean_unused_z<F: ark_ff::PrimeField>(
+    cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
+) {
+    let mut z_index_remap: HashMap<usize, usize> = HashMap::new();
+    for ccs_value in cell_mapping.values_mut() {
+        if let CCSValue::InsideZ(old_z_index) = ccs_value {
+            if let Some(new_z_index) = z_index_remap.get(old_z_index).copied() {
+                *old_z_index = new_z_index;
+            } else {
+                let new_z_index = z_index_remap.len() + 1; // +1 because we shouldn't assign witness at Z[0]
+                z_index_remap.insert(*old_z_index, new_z_index);
+                *old_z_index = new_z_index;
+            }
         }
     }
-
-    deduplication_map
 }
 
 fn generate_mj<F: ark_ff::PrimeField>(
