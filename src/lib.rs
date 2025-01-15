@@ -771,6 +771,73 @@ mod tests {
     }
 
     #[test]
+    fn test_poseidon_fail() -> Result<(), Error> {
+        let message = [Fp::random(OsRng), Fp::random(OsRng)];
+        let output = 0.into();
+
+        let k = 6;
+        let mut instance_column: Vec<Option<Fp>> = vec![None; 1 << k];
+        instance_column[0] = Some(output);
+
+        let circuit = HashCircuit::<OrchardNullifier, 3, 2, 2> {
+            message: Value::known(message),
+            _spec: PhantomData,
+        };
+
+        let mut meta = ConstraintSystem::<Fp>::default();
+        let config = HashCircuit::<OrchardNullifier, 3, 2, 2>::configure(&mut meta);
+        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
+        cell_dumper.instance[0][0] = Value::known(instance_column[0].unwrap());
+
+        <<HashCircuit<OrchardNullifier, 3, 2, 2> as halo2_proofs::plonk::Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
+            &mut cell_dumper,
+            &circuit,
+            config,
+            meta.constants.clone(),
+        )?;
+
+        let advice: Vec<&[Option<Fp>]> = cell_dumper
+            .advice
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let fixed: Vec<&[Option<Fp>]> = cell_dumper
+            .fixed
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let selectors: Vec<&[bool]> = cell_dumper
+            .selectors
+            .iter()
+            .map(|x| x.as_slice())
+            .collect::<Vec<_>>();
+        let cell_mapping = generate_cell_mapping(
+            &[&instance_column],
+            &advice,
+            &fixed,
+            &selectors,
+            &cell_dumper.copy_constraints,
+        );
+
+        let custom_gates = dump_gates::<Fp, HashCircuit<OrchardNullifier, 3, 2, 2>>()?;
+        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
+            .into_iter()
+            .map(|expr| get_monomials(expr))
+            .collect();
+        let monomials: Vec<&[Monomial<Fq>]> = monomials.iter().map(|x| x.as_slice()).collect();
+        let ccs_instance: CCS<Fq> = generate_ccs_instance(&monomials, &cell_mapping);
+
+        let z: Vec<Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
+
+        let prover = MockProver::run(k, &circuit, vec![vec![output]]).unwrap();
+        assert!(prover.verify().is_err());
+
+        assert!(!is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_monomials() -> Result<(), Error> {
         let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
         dbg!(&custom_gates);
