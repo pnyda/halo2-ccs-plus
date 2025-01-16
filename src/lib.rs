@@ -155,6 +155,8 @@ enum CCSValue<F: ark_ff::PrimeField> {
 // A mapping from absolute cell position in the original table (column_type, column_index, row_index)
 // to the position in Z
 fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
+    // These have to have the shape [[cell assignment; number of rows]; number of columns]
+    // None means unassigned cell
     instance: &[&[Option<HALO2>]],
     advice: &[&[Option<HALO2>]],
     fixed: &[&[Option<HALO2>]],
@@ -327,6 +329,9 @@ fn clean_unused_z<F: ark_ff::PrimeField>(
             CCSValue::InsideZ(z_index) => Some(z_index),
         })
         .collect();
+
+    // HashMap.values_mut() returns an iterator with undefined order.
+    // We sort it here to make Z ordered in (1, x, w).
     used_z_index.sort();
 
     let mut z_height = 1;
@@ -555,6 +560,13 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
     z
 }
 
+/// Converts a Halo2 circuit into a sonobe CCS instance.
+///
+/// * `k` log_2(the height of the Plonkish table)
+/// * `c` A Halo2 circuit you wish to convert
+/// * `instance` Assignments to the instance columns. The length of this slice must equal the number of the instance columns in `c`.
+///
+/// Returns a pair of (a ccs instance, the witness vector Z)
 pub fn convert_halo2_circuit<
     HALO2: ff::PrimeField<Repr = [u8; 32]>,
     C: Circuit<HALO2>,
