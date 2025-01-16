@@ -641,7 +641,6 @@ pub fn convert_halo2_circuit<
 mod tests {
     use super::*;
     use crate::tests::primitives::P128Pow5T3 as OrchardNullifier;
-    use ark_pallas::Fq;
     use ark_std::rand::rngs::OsRng;
     use ff::Field;
     use folding_schemes::utils::vec::is_zero_vec;
@@ -652,7 +651,6 @@ mod tests {
     use halo2_proofs::circuit::SimpleFloorPlanner;
     use halo2_proofs::circuit::Value;
     use halo2_proofs::dev::MockProver;
-    use halo2_proofs::dump::{dump_gates, dump_lookups, AssignmentDumper};
     use halo2_proofs::pasta::Fp;
     use halo2_proofs::plonk::Error;
     use halo2_proofs::poly::Rotation;
@@ -731,41 +729,6 @@ mod tests {
         let prover = MockProver::run(k, &circuit, vec![vec![output]]).unwrap();
         assert!(prover.verify().is_err());
         assert!(!is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_monomials() -> Result<(), Error> {
-        let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
-        dbg!(&custom_gates);
-
-        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
-            .into_iter()
-            .map(|expr| get_monomials(expr))
-            .collect();
-        dbg!(monomials);
-
-        let k = 4;
-        let mut meta = ConstraintSystem::<Fp>::default();
-        let config = FibonacciCircuit::configure(&mut meta);
-
-        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
-        cell_dumper.instance[0][0] = Value::known(1.into());
-        cell_dumper.instance[0][1] = Value::known(1.into());
-        cell_dumper.instance[0][2] = Value::known(55.into());
-
-        let circuit = FibonacciCircuit(PhantomData);
-        <<FibonacciCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
-            &mut cell_dumper,
-            &circuit,
-            config,
-            meta.constants.clone(),
-        )?;
-
-        dbg!(cell_dumper);
-        dbg!(dump_gates::<Fp, FibonacciCircuit<Fp>>());
-        dbg!(dump_lookups::<Fp, FibonacciCircuit<Fp>>());
 
         Ok(())
     }
