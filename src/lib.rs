@@ -2,7 +2,11 @@
 use ark_std::log2;
 use folding_schemes::arith::ccs::CCS;
 use folding_schemes::utils::vec::SparseMatrix;
+use halo2_proofs::circuit::Value;
+use halo2_proofs::dump::dump_gates;
+use halo2_proofs::dump::AssignmentDumper;
 use halo2_proofs::dump::CopyConstraint;
+use halo2_proofs::plonk;
 use halo2_proofs::plonk::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -551,6 +555,88 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
     z
 }
 
+pub fn convert_halo2_circuit<
+    HALO2: ff::PrimeField<Repr = [u8; 32]>,
+    C: Circuit<HALO2>,
+    ARKWORKS: ark_ff::PrimeField,
+>(
+    k: u32,
+    circuit: &C,
+    instance: &[&[HALO2]],
+) -> Result<(CCS<ARKWORKS>, Vec<ARKWORKS>), plonk::Error> {
+    let mut meta = ConstraintSystem::<HALO2>::default();
+    let config = C::configure(&mut meta);
+
+    // both AssignmentDumper and generate_ccs_instance expects Vec of length 1 << k
+    // so I need to fill the vec
+    let instance_option: Vec<Vec<Option<HALO2>>> = instance
+        .iter()
+        .map(|cells| {
+            let mut column = vec![None; 1 << k];
+            column[0..cells.len()]
+                .copy_from_slice(&cells.iter().map(|cell| Some(*cell)).collect::<Vec<_>>());
+            column
+        })
+        .collect();
+    let instance_value: Vec<Vec<Value<HALO2>>> = instance
+        .iter()
+        .map(|cells| {
+            let mut column = vec![Value::unknown(); 1 << k];
+            column[0..cells.len()].copy_from_slice(
+                &cells
+                    .iter()
+                    .map(|cell| Value::known(*cell))
+                    .collect::<Vec<_>>(),
+            );
+            column
+        })
+        .collect();
+
+    let mut cell_dumper: AssignmentDumper<HALO2> = AssignmentDumper::new(k, &meta);
+    cell_dumper.instance = instance_value;
+    C::FloorPlanner::synthesize(&mut cell_dumper, circuit, config, meta.constants.clone())?;
+
+    let instance_option: Vec<&[Option<HALO2>]> = instance_option
+        .iter()
+        .map(|x| x.as_slice())
+        .collect::<Vec<_>>();
+    let advice: Vec<&[Option<HALO2>]> = cell_dumper
+        .advice
+        .iter()
+        .map(|x| x.as_slice())
+        .collect::<Vec<_>>();
+    let fixed: Vec<&[Option<HALO2>]> = cell_dumper
+        .fixed
+        .iter()
+        .map(|x| x.as_slice())
+        .collect::<Vec<_>>();
+    let selectors: Vec<&[bool]> = cell_dumper
+        .selectors
+        .iter()
+        .map(|x| x.as_slice())
+        .collect::<Vec<_>>();
+    let cell_mapping = generate_cell_mapping(
+        &instance_option,
+        &advice,
+        &fixed,
+        &selectors,
+        &cell_dumper.copy_constraints,
+    );
+
+    let custom_gates = dump_gates::<HALO2, C>()?;
+    let monomials: Vec<Vec<Monomial<ARKWORKS>>> = custom_gates
+        .into_iter()
+        .map(|expr| get_monomials(expr))
+        .collect();
+    let monomials: Vec<&[Monomial<ARKWORKS>]> =
+        monomials.iter().map(|x| x.as_slice()).collect::<Vec<_>>();
+
+    let ccs_instance: CCS<ARKWORKS> = generate_ccs_instance(&monomials, &cell_mapping);
+    let z: Vec<ARKWORKS> = generate_z(&instance_option, &advice, &cell_mapping);
+
+    Ok((ccs_instance, z))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,130 +660,32 @@ mod tests {
 
     #[test]
     fn test_fibonacci_success() -> Result<(), Error> {
-        let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
-        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
-            .into_iter()
-            .map(|expr| get_monomials(expr))
-            .collect();
-        let monomials: Vec<&[Monomial<Fq>]> = monomials.iter().map(|x| x.as_slice()).collect();
+        let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
 
         let k = 4;
-        let mut meta = ConstraintSystem::<Fp>::default();
-        let config = FibonacciCircuit::configure(&mut meta);
-
-        let mut instance_column: Vec<Option<Fp>> = vec![None; 1 << k];
-        instance_column[0] = Some(1.into());
-        instance_column[1] = Some(1.into());
-        instance_column[2] = Some(55.into());
-
-        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
-        cell_dumper.instance[0][0] = Value::known(instance_column[0].unwrap());
-        cell_dumper.instance[0][1] = Value::known(instance_column[1].unwrap());
-        cell_dumper.instance[0][2] = Value::known(instance_column[2].unwrap());
-
         let circuit = FibonacciCircuit(PhantomData);
-        <<FibonacciCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
-            &mut cell_dumper,
-            &circuit,
-            config,
-            meta.constants.clone(),
-        )?;
+        let (ccs, z) =
+            convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&instance_column])?;
 
-        let advice: Vec<&[Option<Fp>]> = cell_dumper
-            .advice
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let fixed: Vec<&[Option<Fp>]> = cell_dumper
-            .fixed
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let selectors: Vec<&[bool]> = cell_dumper
-            .selectors
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-
-        let cell_mapping = generate_cell_mapping(
-            &[&instance_column],
-            &advice,
-            &fixed,
-            &selectors,
-            &cell_dumper.copy_constraints,
-        );
-        let ccs_instance: CCS<ark_pallas::Fq> = generate_ccs_instance(&monomials, &cell_mapping);
-        let z: Vec<ark_pallas::Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
-
-        let instance_column = instance_column.into_iter().filter_map(|x| x).collect();
         let prover = MockProver::run(k, &circuit, vec![instance_column]).unwrap();
         assert!(prover.verify().is_ok());
-        assert!(is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
+        assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
 
         Ok(())
     }
 
     #[test]
     fn test_fibonacci_fail() -> Result<(), Error> {
-        let custom_gates = dump_gates::<Fp, FibonacciCircuit<Fp>>()?;
-        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
-            .into_iter()
-            .map(|expr| get_monomials(expr))
-            .collect();
-        let monomials: Vec<&[Monomial<Fq>]> = monomials.iter().map(|x| x.as_slice()).collect();
+        let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 54.into()];
 
         let k = 4;
-        let mut meta = ConstraintSystem::<Fp>::default();
-        let config = FibonacciCircuit::configure(&mut meta);
-
-        let mut instance_column: Vec<Option<Fp>> = vec![None; 1 << k];
-        instance_column[0] = Some(1.into());
-        instance_column[1] = Some(1.into());
-        instance_column[2] = Some(54.into());
-
-        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
-        cell_dumper.instance[0][0] = Value::known(instance_column[0].unwrap());
-        cell_dumper.instance[0][1] = Value::known(instance_column[1].unwrap());
-        cell_dumper.instance[0][2] = Value::known(instance_column[2].unwrap());
-
         let circuit = FibonacciCircuit(PhantomData);
-        <<FibonacciCircuit<Fp> as Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
-            &mut cell_dumper,
-            &circuit,
-            config,
-            meta.constants.clone(),
-        )?;
+        let (ccs, z) =
+            convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&instance_column])?;
 
-        let advice: Vec<&[Option<Fp>]> = cell_dumper
-            .advice
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let fixed: Vec<&[Option<Fp>]> = cell_dumper
-            .fixed
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let selectors: Vec<&[bool]> = cell_dumper
-            .selectors
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-
-        let cell_mapping = generate_cell_mapping(
-            &[&instance_column],
-            &advice,
-            &fixed,
-            &selectors,
-            &cell_dumper.copy_constraints,
-        );
-        let ccs_instance: CCS<ark_pallas::Fq> = generate_ccs_instance(&monomials, &cell_mapping);
-        let z: Vec<ark_pallas::Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
-
-        let instance_column = instance_column.into_iter().filter_map(|x| x).collect();
         let prover = MockProver::run(k, &circuit, vec![instance_column]).unwrap();
         assert!(prover.verify().is_err());
-        assert!(!is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
+        assert!(!is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
 
         Ok(())
     }
@@ -715,63 +703,15 @@ mod tests {
         .hash(message);
 
         let k = 6;
-        let mut instance_column: Vec<Option<Fp>> = vec![None; 1 << k];
-        instance_column[0] = Some(output);
-
         let circuit = HashCircuit::<OrchardNullifier, 3, 2, 2> {
             message: Value::known(message),
             _spec: PhantomData,
         };
-
-        let mut meta = ConstraintSystem::<Fp>::default();
-        let config = HashCircuit::<OrchardNullifier, 3, 2, 2>::configure(&mut meta);
-        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
-        cell_dumper.instance[0][0] = Value::known(instance_column[0].unwrap());
-
-        <<HashCircuit<OrchardNullifier, 3, 2, 2> as halo2_proofs::plonk::Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
-            &mut cell_dumper,
-            &circuit,
-            config,
-            meta.constants.clone(),
-        )?;
-
-        let advice: Vec<&[Option<Fp>]> = cell_dumper
-            .advice
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let fixed: Vec<&[Option<Fp>]> = cell_dumper
-            .fixed
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let selectors: Vec<&[bool]> = cell_dumper
-            .selectors
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let cell_mapping = generate_cell_mapping(
-            &[&instance_column],
-            &advice,
-            &fixed,
-            &selectors,
-            &cell_dumper.copy_constraints,
-        );
-
-        let custom_gates = dump_gates::<Fp, HashCircuit<OrchardNullifier, 3, 2, 2>>()?;
-        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
-            .into_iter()
-            .map(|expr| get_monomials(expr))
-            .collect();
-        let monomials: Vec<&[Monomial<Fq>]> = monomials.iter().map(|x| x.as_slice()).collect();
-        let ccs_instance: CCS<Fq> = generate_ccs_instance(&monomials, &cell_mapping);
-
-        let z: Vec<Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
+        let (ccs, z) = convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&[output]])?;
 
         let prover = MockProver::run(k, &circuit, vec![vec![output]]).unwrap();
         assert_eq!(prover.verify(), Ok(()));
-
-        assert!(is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
+        assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
 
         Ok(())
     }
@@ -782,63 +722,15 @@ mod tests {
         let output = 0.into();
 
         let k = 6;
-        let mut instance_column: Vec<Option<Fp>> = vec![None; 1 << k];
-        instance_column[0] = Some(output);
-
         let circuit = HashCircuit::<OrchardNullifier, 3, 2, 2> {
             message: Value::known(message),
             _spec: PhantomData,
         };
-
-        let mut meta = ConstraintSystem::<Fp>::default();
-        let config = HashCircuit::<OrchardNullifier, 3, 2, 2>::configure(&mut meta);
-        let mut cell_dumper: AssignmentDumper<Fp> = AssignmentDumper::new(k, &meta);
-        cell_dumper.instance[0][0] = Value::known(instance_column[0].unwrap());
-
-        <<HashCircuit<OrchardNullifier, 3, 2, 2> as halo2_proofs::plonk::Circuit<Fp>>::FloorPlanner as FloorPlanner>::synthesize(
-            &mut cell_dumper,
-            &circuit,
-            config,
-            meta.constants.clone(),
-        )?;
-
-        let advice: Vec<&[Option<Fp>]> = cell_dumper
-            .advice
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let fixed: Vec<&[Option<Fp>]> = cell_dumper
-            .fixed
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let selectors: Vec<&[bool]> = cell_dumper
-            .selectors
-            .iter()
-            .map(|x| x.as_slice())
-            .collect::<Vec<_>>();
-        let cell_mapping = generate_cell_mapping(
-            &[&instance_column],
-            &advice,
-            &fixed,
-            &selectors,
-            &cell_dumper.copy_constraints,
-        );
-
-        let custom_gates = dump_gates::<Fp, HashCircuit<OrchardNullifier, 3, 2, 2>>()?;
-        let monomials: Vec<Vec<Monomial<Fq>>> = custom_gates
-            .into_iter()
-            .map(|expr| get_monomials(expr))
-            .collect();
-        let monomials: Vec<&[Monomial<Fq>]> = monomials.iter().map(|x| x.as_slice()).collect();
-        let ccs_instance: CCS<Fq> = generate_ccs_instance(&monomials, &cell_mapping);
-
-        let z: Vec<Fq> = generate_z(&[&instance_column], &advice, &cell_mapping);
+        let (ccs, z) = convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&[output]])?;
 
         let prover = MockProver::run(k, &circuit, vec![vec![output]]).unwrap();
         assert!(prover.verify().is_err());
-
-        assert!(!is_zero_vec(&ccs_instance.eval_at_z(&z).unwrap()));
+        assert!(!is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
 
         Ok(())
     }
@@ -894,14 +786,14 @@ mod tests {
     }
 
     impl<F: Field> FibonacciChip<F> {
-        pub fn construct(config: FibonacciConfig) -> Self {
+        fn construct(config: FibonacciConfig) -> Self {
             Self {
                 config,
                 _marker: PhantomData,
             }
         }
 
-        pub fn configure(
+        fn configure(
             meta: &mut ConstraintSystem<F>,
             advice: Column<Advice>,
             instance: Column<Instance>,
@@ -933,7 +825,7 @@ mod tests {
             }
         }
 
-        pub fn assign(
+        fn assign(
             &self,
             mut layouter: impl Layouter<F>,
             nrows: usize,
@@ -980,7 +872,7 @@ mod tests {
             )
         }
 
-        pub fn expose_public(
+        fn expose_public(
             &self,
             mut layouter: impl Layouter<F>,
             cell: AssignedCell<F, F>,
