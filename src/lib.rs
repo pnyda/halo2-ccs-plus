@@ -20,6 +20,7 @@ enum Query {
     Advice(AdviceQuery),
     Instance(InstanceQuery),
     Selector(Selector),
+    LookupInput(usize), // the index of lookup input
 }
 
 impl Query {
@@ -47,6 +48,11 @@ impl Query {
                 column_index: query.column_index,
                 row_index: (at_row as i32 + query.rotation.0).rem_euclid(table_height as i32)
                     as usize,
+            },
+            Query::LookupInput(index) => AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: index,
+                row_index: at_row,
             },
         }
     }
@@ -76,6 +82,10 @@ impl Hash for Query {
                 hasher.write(&[3u8]); // enum variant ID
                 hasher.write(&query.0.to_le_bytes());
             }
+            Self::LookupInput(index) => {
+                hasher.write(&[4u8]);
+                hasher.write(&index.to_le_bytes());
+            }
         }
 
         hasher.finish();
@@ -97,6 +107,7 @@ impl PartialEq for Query {
                 lhs.rotation == rhs.rotation && lhs.column_index == rhs.column_index
             }
             (Self::Selector(lhs), Self::Selector(rhs)) => lhs.0 == rhs.0,
+            (Self::LookupInput(lhs), Self::LookupInput(rhs)) => lhs == rhs,
             _ => false,
         }
     }
@@ -194,6 +205,7 @@ fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
     fixed: &[&[Option<HALO2>]],
     selectors: &[&[bool]],
     copy_constraints: &[CopyConstraint],
+    lookup_inputs: &[Expression<HALO2>],
 ) -> HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>> {
     let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>> = HashMap::new();
 
@@ -248,7 +260,36 @@ fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
 
     // Next, incorporate the copy constraints into the mapping.
     deduplicate_witness(&mut cell_mapping, copy_constraints);
-    clean_unused_z(&mut cell_mapping);
+    let mut z_height = clean_unused_z(&mut cell_mapping);
+
+    // Next, incorporate lookup constraints into the mapping.
+    let table_height = advice[0].len();
+    for (lookup_index, lookup_input) in lookup_inputs.iter().enumerate() {
+        for y in 0..table_height {
+            let key = AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: lookup_index,
+                row_index: y,
+            };
+            let value = match lookup_input {
+                // If the lookup input is just an existing cell, we don't add new witness to Z
+                Expression::Advice(query) => cell_mapping
+                    .get(&Query::Advice(*query).cell_position(y, table_height))
+                    .copied()
+                    .unwrap(),
+                Expression::Instance(query) => cell_mapping
+                    .get(&Query::Instance(*query).cell_position(y, table_height))
+                    .copied()
+                    .unwrap(),
+                // If the lookup input is a complex Expression, we will create new witness
+                _ => {
+                    z_height += 1;
+                    CCSValue::InsideZ(z_height - 1)
+                }
+            };
+            cell_mapping.insert(key, value);
+        }
+    }
 
     cell_mapping
 }
@@ -261,6 +302,7 @@ fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
 //   the former will get deduplicated into the latter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum VirtualColumnType {
+    LookupInput,
     Selector,
     Fixed,
     Instance,
@@ -351,9 +393,10 @@ fn deduplicate_witness<F: ark_ff::PrimeField>(
 
 // The witness deduplication will make some z_index unused
 // Thus we have to reassign z_index
+// Returns the height of Z vector after the clean up
 fn clean_unused_z<F: ark_ff::PrimeField>(
     cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
-) {
+) -> usize {
     let mut used_z_index: Vec<&mut usize> = cell_mapping
         .values_mut()
         .filter_map(|ccs_value| match ccs_value {
@@ -363,7 +406,7 @@ fn clean_unused_z<F: ark_ff::PrimeField>(
         .collect();
 
     // HashMap.values_mut() returns an iterator with undefined order.
-    // We sort it here to make Z ordered in (1, x, w).
+    // We sort it here to order Z in (1, x, w).
     used_z_index.sort();
 
     let mut z_height = 1;
@@ -377,6 +420,8 @@ fn clean_unused_z<F: ark_ff::PrimeField>(
             z_height += 1;
         }
     }
+
+    z_height
 }
 
 fn generate_mj<F: ark_ff::PrimeField>(
@@ -413,9 +458,10 @@ fn generate_mj<F: ark_ff::PrimeField>(
     mj
 }
 
-fn generate_ccs_instance<F: ark_ff::PrimeField>(
+fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::PrimeField>(
     custom_gates: &[&[Monomial<F>]],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
+    lookup_inputs: &[Expression<HALO2>],
 ) -> CCS<F> {
     let table_height = cell_mapping
         .keys()
@@ -441,11 +487,35 @@ fn generate_ccs_instance<F: ark_ff::PrimeField>(
         })
         .sum();
 
-    let m = custom_gates.len() * table_height;
+    let lookup_gates: Vec<Vec<Monomial<F>>> = lookup_inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(lookup_index, expr)| match expr {
+            // If the lookup input is just an existing cell, we don't add new witness to Z
+            Expression::Advice(_) => None,
+            Expression::Instance(_) => None,
+            // If the lookup input is a complex Expression, we will create new witness, and constrain those witnesses according to the Expression<F>
+            _ => {
+                let mut monomials = vec![Monomial {
+                    coefficient: -F::one(),
+                    variables: vec![Query::LookupInput(lookup_index)],
+                }];
+                monomials.extend(get_monomials(expr));
+                Some(monomials)
+            }
+        })
+        .collect();
+
+    let m = (custom_gates.len() + lookup_gates.len()) * table_height;
 
     // A map from (custom gate ID, queried column type, queried column index, rotation) -> M_j
     let mut m_map: HashMap<(usize, Query), SparseMatrix<F>> = HashMap::new();
-    for (gate_index, monomials) in custom_gates.iter().enumerate() {
+    for (gate_index, monomials) in custom_gates
+        .iter()
+        .map(|x| *x)
+        .chain(lookup_gates.iter().map(|x| x.as_slice()))
+        .enumerate()
+    {
         for monomial in monomials.iter() {
             for query in monomial.variables.iter() {
                 // Shift the m_j down
@@ -529,7 +599,9 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
     instance: &[&[Option<HALO2>]],
     advice: &[&[Option<HALO2>]],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>>,
+    lookup_inputs: &[Expression<HALO2>],
 ) -> Vec<ARKWORKS> {
+    let table_height = advice[0].len();
     let z_height = cell_mapping
         .values()
         .map(|ccs_value| match ccs_value {
@@ -551,7 +623,7 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
     // when an element in Z represents more than 2 cells in the original Plonkish table due to copy constraints
     // the value in AbsoluteCellPosition with less ordering should take precedence
 
-    for cell_position in cells {
+    for cell_position in cells.iter() {
         let cell_value = match cell_position.column_type {
             VirtualColumnType::Advice => {
                 advice[cell_position.column_index][cell_position.row_index]
@@ -564,6 +636,39 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
         if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).copied().unwrap() {
             if let Some(cell_value) = cell_value {
                 z[z_index] = ARKWORKS::from_le_bytes_mod_order(&cell_value.to_repr());
+            }
+        }
+    }
+
+    // Done assigning witnesses for advice cells and instance cells.
+    // Now we can calculate witnesses for lookup inputs.
+
+    for cell_position in cells {
+        if cell_position.column_type == VirtualColumnType::LookupInput {
+            if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).copied().unwrap() {
+                z[z_index] = get_monomials(&lookup_inputs[cell_position.column_index])
+                    .iter()
+                    .map(|monomial: &Monomial<ARKWORKS>| {
+                        monomial.coefficient
+                            * monomial
+                                .variables
+                                .iter()
+                                .map(|query| {
+                                    let ccs_value =
+                                        cell_mapping
+                                            .get(&query.cell_position(
+                                                cell_position.row_index,
+                                                table_height,
+                                            ))
+                                            .unwrap();
+                                    match ccs_value {
+                                        CCSValue::InsideM(constant) => *constant,
+                                        CCSValue::InsideZ(z_index) => z[*z_index],
+                                    }
+                                })
+                                .product::<ARKWORKS>()
+                    })
+                    .sum::<ARKWORKS>();
             }
         }
     }
@@ -591,7 +696,7 @@ pub fn convert_halo2_circuit<
     (
         CCS<ARKWORKS>,
         Vec<ARKWORKS>,
-        Vec<(usize, HashSet<ARKWORKS>)>,
+        Vec<(HashSet<usize>, HashSet<ARKWORKS>)>,
     ),
     plonk::Error,
 > {
@@ -647,12 +752,17 @@ pub fn convert_halo2_circuit<
         .iter()
         .map(|x| x.as_slice())
         .collect::<Vec<_>>();
+
+    let lookups = dump_lookups::<HALO2, C>()?;
+    let lookup_inputs: Vec<Expression<HALO2>> =
+        lookups.iter().map(|(input, _)| input).cloned().collect();
     let cell_mapping = generate_cell_mapping(
         &instance_option,
         &advice,
         &fixed,
         &selectors,
         &cell_dumper.copy_constraints,
+        &lookup_inputs,
     );
 
     let custom_gates = dump_gates::<HALO2, C>()?;
@@ -663,10 +773,10 @@ pub fn convert_halo2_circuit<
     let monomials: Vec<&[Monomial<ARKWORKS>]> =
         monomials.iter().map(|x| x.as_slice()).collect::<Vec<_>>();
 
-    let ccs_instance: CCS<ARKWORKS> = generate_ccs_instance(&monomials, &cell_mapping);
-    let z: Vec<ARKWORKS> = generate_z(&instance_option, &advice, &cell_mapping);
+    let ccs_instance: CCS<ARKWORKS> =
+        generate_ccs_instance(&monomials, &cell_mapping, &lookup_inputs);
+    let z: Vec<ARKWORKS> = generate_z(&instance_option, &advice, &cell_mapping, &lookup_inputs);
 
-    let lookups = dump_lookups::<HALO2, C>()?;
     let tables: Vec<HashSet<ARKWORKS>> = lookups.iter().map(|(input_expr, table_expr)| {
         let monomials: Vec<Monomial<ARKWORKS>> = get_monomials(table_expr);
         (0..1 << k).into_iter().map(|y| {
@@ -682,7 +792,32 @@ pub fn convert_halo2_circuit<
         }).collect()
     }).collect();
 
-    Ok((ccs_instance, z, vec![]))
+    let L = (0..lookups.len())
+        .map(|lookup_index| {
+            (
+                cell_mapping
+                    .iter()
+                    .filter_map(|(position, value)| {
+                        if position.column_type == VirtualColumnType::LookupInput
+                            && position.column_index == lookup_index
+                        {
+                            if let CCSValue::InsideZ(z_index) = value {
+                                Some(z_index)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .copied()
+                    .collect(),
+                tables[lookup_index].clone(),
+            )
+        })
+        .collect();
+
+    Ok((ccs_instance, z, L))
 }
 
 #[cfg(test)]
