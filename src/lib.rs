@@ -4,12 +4,14 @@ use folding_schemes::arith::ccs::CCS;
 use folding_schemes::utils::vec::SparseMatrix;
 use halo2_proofs::circuit::Value;
 use halo2_proofs::dump::dump_gates;
+use halo2_proofs::dump::dump_lookups;
 use halo2_proofs::dump::AssignmentDumper;
 use halo2_proofs::dump::CopyConstraint;
 use halo2_proofs::plonk;
 use halo2_proofs::plonk::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone, Copy)]
@@ -18,6 +20,36 @@ enum Query {
     Advice(AdviceQuery),
     Instance(InstanceQuery),
     Selector(Selector),
+}
+
+impl Query {
+    fn cell_position(self, at_row: usize, table_height: usize) -> AbsoluteCellPosition {
+        match self {
+            Query::Selector(query) => AbsoluteCellPosition {
+                column_type: VirtualColumnType::Selector,
+                column_index: query.0,
+                row_index: at_row,
+            },
+            Query::Fixed(query) => AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: query.column_index,
+                row_index: (at_row as i32 + query.rotation.0).rem_euclid(table_height as i32)
+                    as usize,
+            },
+            Query::Instance(query) => AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: query.column_index,
+                row_index: (at_row as i32 + query.rotation.0).rem_euclid(table_height as i32)
+                    as usize,
+            },
+            Query::Advice(query) => AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: query.column_index,
+                row_index: (at_row as i32 + query.rotation.0).rem_euclid(table_height as i32)
+                    as usize,
+            },
+        }
+    }
 }
 
 impl Hash for Query {
@@ -79,7 +111,7 @@ struct Monomial<F: ark_ff::PrimeField> {
 }
 
 fn get_monomials<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
-    expr: Expression<HALO2>,
+    expr: &Expression<HALO2>,
 ) -> Vec<Monomial<ARKWORKS>> {
     match expr {
         Expression::Constant(constant) => vec![Monomial {
@@ -88,28 +120,28 @@ fn get_monomials<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::Prime
         }],
         Expression::Selector(query) => vec![Monomial {
             coefficient: 1.into(),
-            variables: vec![Query::Selector(query)],
+            variables: vec![Query::Selector(*query)],
         }],
         Expression::Advice(query) => vec![Monomial {
             coefficient: 1.into(),
-            variables: vec![Query::Advice(query)],
+            variables: vec![Query::Advice(*query)],
         }],
         Expression::Fixed(query) => vec![Monomial {
             coefficient: 1.into(),
-            variables: vec![Query::Fixed(query)],
+            variables: vec![Query::Fixed(*query)],
         }],
         Expression::Instance(query) => vec![Monomial {
             coefficient: 1.into(),
-            variables: vec![Query::Instance(query)],
+            variables: vec![Query::Instance(*query)],
         }],
-        Expression::Negated(expr) => get_monomials::<HALO2, ARKWORKS>(*expr)
+        Expression::Negated(expr) => get_monomials::<HALO2, ARKWORKS>(expr)
             .into_iter()
             .map(|original| Monomial {
                 coefficient: original.coefficient.neg(),
                 variables: original.variables,
             })
             .collect(),
-        Expression::Scaled(expr, scalar) => get_monomials::<HALO2, ARKWORKS>(*expr)
+        Expression::Scaled(expr, scalar) => get_monomials::<HALO2, ARKWORKS>(expr)
             .into_iter()
             .map(|original| Monomial {
                 coefficient: original.coefficient
@@ -119,13 +151,13 @@ fn get_monomials<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::Prime
             .collect(),
         Expression::Sum(lhs, rhs) => {
             let mut result = Vec::new();
-            result.extend(get_monomials::<HALO2, ARKWORKS>(*lhs));
-            result.extend(get_monomials::<HALO2, ARKWORKS>(*rhs));
+            result.extend(get_monomials::<HALO2, ARKWORKS>(lhs));
+            result.extend(get_monomials::<HALO2, ARKWORKS>(rhs));
             result
         }
         Expression::Product(lhs, rhs) => {
-            let lhs_monomials = get_monomials::<HALO2, ARKWORKS>(*lhs);
-            let rhs_monomials = get_monomials::<HALO2, ARKWORKS>(*rhs);
+            let lhs_monomials = get_monomials::<HALO2, ARKWORKS>(lhs);
+            let rhs_monomials = get_monomials::<HALO2, ARKWORKS>(rhs);
             let mut result = Vec::new();
 
             for lhs_monomial in lhs_monomials.iter() {
@@ -359,28 +391,7 @@ fn generate_mj<F: ark_ff::PrimeField>(
     // might increase later when there was multiple custom gates.
 
     for y in 0..table_height {
-        let cell_position = match query {
-            Query::Selector(query) => AbsoluteCellPosition {
-                column_type: VirtualColumnType::Selector,
-                column_index: query.0,
-                row_index: y,
-            },
-            Query::Fixed(query) => AbsoluteCellPosition {
-                column_type: VirtualColumnType::Fixed,
-                column_index: query.column_index,
-                row_index: (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize,
-            },
-            Query::Instance(query) => AbsoluteCellPosition {
-                column_type: VirtualColumnType::Instance,
-                column_index: query.column_index,
-                row_index: (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize,
-            },
-            Query::Advice(query) => AbsoluteCellPosition {
-                column_type: VirtualColumnType::Advice,
-                column_index: query.column_index,
-                row_index: (y as i32 + query.rotation.0).rem_euclid(table_height as i32) as usize,
-            },
-        };
+        let cell_position = query.cell_position(y, table_height);
 
         let ccs_value = cell_mapping.get(&cell_position).unwrap();
         match ccs_value {
@@ -566,7 +577,8 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
 /// * `c` A Halo2 circuit you wish to convert
 /// * `instance` Assignments to the instance columns. The length of this slice must equal the number of the instance columns in `c`.
 ///
-/// Returns a pair of (a ccs instance, the witness vector Z)
+/// Returns a pair of (a ccs instance, the witness vector Z, and lookup constraints)
+/// lookup constraints takes a form of Vec<(o, T)> where z[o] must be in T
 pub fn convert_halo2_circuit<
     HALO2: ff::PrimeField<Repr = [u8; 32]>,
     C: Circuit<HALO2>,
@@ -575,7 +587,14 @@ pub fn convert_halo2_circuit<
     k: u32,
     circuit: &C,
     instance: &[&[HALO2]],
-) -> Result<(CCS<ARKWORKS>, Vec<ARKWORKS>), plonk::Error> {
+) -> Result<
+    (
+        CCS<ARKWORKS>,
+        Vec<ARKWORKS>,
+        Vec<(usize, HashSet<ARKWORKS>)>,
+    ),
+    plonk::Error,
+> {
     let mut meta = ConstraintSystem::<HALO2>::default();
     let config = C::configure(&mut meta);
 
@@ -608,6 +627,7 @@ pub fn convert_halo2_circuit<
     cell_dumper.instance = instance_value;
     C::FloorPlanner::synthesize(&mut cell_dumper, circuit, config, meta.constants.clone())?;
 
+    // FIXME: Isn't there a better way to make &[&[A]] from Vec<Vec<A>>?
     let instance_option: Vec<&[Option<HALO2>]> = instance_option
         .iter()
         .map(|x| x.as_slice())
@@ -638,7 +658,7 @@ pub fn convert_halo2_circuit<
     let custom_gates = dump_gates::<HALO2, C>()?;
     let monomials: Vec<Vec<Monomial<ARKWORKS>>> = custom_gates
         .into_iter()
-        .map(|expr| get_monomials(expr))
+        .map(|expr| get_monomials(&expr))
         .collect();
     let monomials: Vec<&[Monomial<ARKWORKS>]> =
         monomials.iter().map(|x| x.as_slice()).collect::<Vec<_>>();
@@ -646,7 +666,23 @@ pub fn convert_halo2_circuit<
     let ccs_instance: CCS<ARKWORKS> = generate_ccs_instance(&monomials, &cell_mapping);
     let z: Vec<ARKWORKS> = generate_z(&instance_option, &advice, &cell_mapping);
 
-    Ok((ccs_instance, z))
+    let lookups = dump_lookups::<HALO2, C>()?;
+    let tables: Vec<HashSet<ARKWORKS>> = lookups.iter().map(|(input_expr, table_expr)| {
+        let monomials: Vec<Monomial<ARKWORKS>> = get_monomials(table_expr);
+        (0..1 << k).into_iter().map(|y| {
+            monomials.iter().map(|monomial| {
+                monomial.coefficient * monomial.variables.iter().map(|query| {
+                    let ccs_value = cell_mapping.get(&query.cell_position(y, 1 << k)).unwrap();
+                    match ccs_value {
+                        CCSValue::InsideM(constant) => *constant,
+                        CCSValue::InsideZ(_) => unimplemented!("CCS+ does not define an lookup constraint into witnesses")
+                    }
+                }).product::<ARKWORKS>()
+            }).sum()
+        }).collect()
+    }).collect();
+
+    Ok((ccs_instance, z, vec![]))
 }
 
 #[cfg(test)]
@@ -674,7 +710,7 @@ mod tests {
 
         let k = 4;
         let circuit = FibonacciCircuit(PhantomData);
-        let (ccs, z) =
+        let (ccs, z, _) =
             convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&instance_column])?;
 
         let prover = MockProver::run(k, &circuit, vec![instance_column]).unwrap();
@@ -690,7 +726,7 @@ mod tests {
 
         let k = 4;
         let circuit = FibonacciCircuit(PhantomData);
-        let (ccs, z) =
+        let (ccs, z, _) =
             convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&instance_column])?;
 
         let prover = MockProver::run(k, &circuit, vec![instance_column]).unwrap();
@@ -717,7 +753,7 @@ mod tests {
             message: Value::known(message),
             _spec: PhantomData,
         };
-        let (ccs, z) = convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&[output]])?;
+        let (ccs, z, _) = convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&[output]])?;
 
         let prover = MockProver::run(k, &circuit, vec![vec![output]]).unwrap();
         assert_eq!(prover.verify(), Ok(()));
@@ -736,7 +772,7 @@ mod tests {
             message: Value::known(message),
             _spec: PhantomData,
         };
-        let (ccs, z) = convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&[output]])?;
+        let (ccs, z, _) = convert_halo2_circuit::<_, _, ark_pallas::Fq>(k, &circuit, &[&[output]])?;
 
         let prover = MockProver::run(k, &circuit, vec![vec![output]]).unwrap();
         assert!(prover.verify().is_err());
