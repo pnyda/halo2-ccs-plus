@@ -460,7 +460,7 @@ fn generate_mj<F: ark_ff::PrimeField>(
 }
 
 fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::PrimeField>(
-    custom_gates: &[&[Monomial<F>]],
+    custom_gates: &[Expression<HALO2>],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
     lookup_inputs: &[Expression<HALO2>],
 ) -> CCS<F> {
@@ -488,36 +488,38 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
         })
         .sum();
 
-    let lookup_gates: Vec<Vec<Monomial<F>>> = lookup_inputs
+    let mut gates: Vec<Vec<Monomial<F>>> = custom_gates
         .iter()
-        .enumerate()
-        .filter_map(|(lookup_index, expr)| match expr {
-            // If the lookup input is just a query, we don't add new witness to Z.
-            Expression::Advice(_) => None,
-            Expression::Instance(_) => None,
-            // If the lookup input is a complex Expression, we will create new witness, and constrain those witnesses according to the Expression<F>
-            _ => {
-                let mut monomials = vec![Monomial {
-                    // here I'm constraining expr - Z[z_index for LookupInput(lookup_index)] = 0
-                    coefficient: -F::one(),
-                    variables: vec![Query::LookupInput(lookup_index)],
-                }];
-                monomials.extend(get_monomials(expr));
-                Some(monomials)
-            }
-        })
+        .map(|gate| get_monomials(gate))
         .collect();
+    gates.extend(
+        lookup_inputs
+            .iter()
+            .enumerate()
+            .filter_map(|(lookup_index, expr)| match expr {
+                // If the lookup input is just a query, we don't add new witness to Z.
+                // Thus we don't have to add new constraints.
+                Expression::Advice(_) => None,
+                Expression::Instance(_) => None,
+                // If the lookup input is a complex Expression, we will create new witness, and constrain those witnesses according to the Expression<F>
+                _ => {
+                    let mut monomials = vec![Monomial {
+                        // here I'm constraining for each row
+                        // expr - Z[z_index where the lookup input lies] = 0
+                        coefficient: -F::one(),
+                        variables: vec![Query::LookupInput(lookup_index)],
+                    }];
+                    monomials.extend(get_monomials(expr));
+                    Some(monomials)
+                }
+            }),
+    );
 
-    let m = (custom_gates.len() + lookup_gates.len()) * table_height;
+    let m = gates.len() * table_height;
 
     // A map from (custom gate ID, queried column type, queried column index, rotation) -> M_j
     let mut m_map: HashMap<(usize, Query), SparseMatrix<F>> = HashMap::new();
-    for (gate_index, monomials) in custom_gates
-        .iter()
-        .copied()
-        .chain(lookup_gates.iter().map(|x| x.as_slice()))
-        .enumerate()
-    {
+    for (gate_index, monomials) in gates.iter().enumerate() {
         for monomial in monomials.iter() {
             for query in monomial.variables.iter() {
                 // Shift the m_j down
@@ -552,11 +554,11 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
     }
     let m_pair: Vec<((usize, Query), SparseMatrix<F>)> = m_map.into_iter().collect();
 
-    let c: Vec<F> = custom_gates
+    let c: Vec<F> = gates
         .iter()
         .flat_map(|monomials| monomials.iter().map(|monomial| monomial.coefficient))
         .collect();
-    let S: Vec<Vec<usize>> = custom_gates
+    let S: Vec<Vec<usize>> = gates
         .iter()
         .enumerate()
         .flat_map(|(gate_index1, monomials)| {
@@ -766,15 +768,8 @@ pub fn convert_halo2_circuit<
     );
 
     let custom_gates = dump_gates::<HALO2, C>()?;
-    let monomials: Vec<Vec<Monomial<ARKWORKS>>> = custom_gates
-        .into_iter()
-        .map(|expr| get_monomials(&expr))
-        .collect();
-    let monomials: Vec<&[Monomial<ARKWORKS>]> =
-        monomials.iter().map(|x| x.as_slice()).collect::<Vec<_>>();
-
     let ccs_instance: CCS<ARKWORKS> =
-        generate_ccs_instance(&monomials, &cell_mapping, &lookup_inputs);
+        generate_ccs_instance(&custom_gates, &cell_mapping, &lookup_inputs);
     let z: Vec<ARKWORKS> = generate_z(
         &selectors,
         &fixed,
