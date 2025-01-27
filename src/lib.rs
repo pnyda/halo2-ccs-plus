@@ -685,7 +685,7 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
 /// * `instance` Assignments to the instance columns. The length of this slice must equal the number of the instance columns in `c`.
 ///
 /// Returns a pair of (a ccs instance, the witness vector Z, and lookup constraints)
-/// lookup constraints takes a form of Vec<(o, T)> where z[o] must be in T
+/// lookup constraints takes a form of Vec<(L, T)> where for every o ∈ L, z[o] must be in T
 pub fn convert_halo2_circuit<
     HALO2: ff::PrimeField<Repr = [u8; 32]>,
     C: Circuit<HALO2>,

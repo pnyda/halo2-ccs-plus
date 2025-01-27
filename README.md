@@ -1,5 +1,5 @@
 # halo2ccs
-Convert a Plonkish circuit in [Halo2](https://zcash.github.io/halo2/) into a [CCS](https://eprint.iacr.org/2023/552) circuit in [sonobe](https://github.com/privacy-scaling-explorations/sonobe).
+Convert a Plonkish circuit written in [Halo2](https://zcash.github.io/halo2/) into a [CCS](https://eprint.iacr.org/2023/552) circuit for [sonobe](https://github.com/privacy-scaling-explorations/sonobe).
 
 [rustdoc](https://pnyda.github.io/halo2-ccs-plus/halo2ccs)
 
