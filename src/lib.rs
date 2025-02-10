@@ -14,16 +14,26 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
+// Reference to a cell, relative to the current row
 #[derive(Debug, Clone, Copy)]
 enum Query {
     Fixed(FixedQuery),
     Advice(AdviceQuery),
     Instance(InstanceQuery),
     Selector(Selector),
-    LookupInput(usize), // the index of lookup input
+    LookupInput(usize), // the index of lookup constraint
+
+                        // Halo2 allows us to constrain an Expression evaluated at each row to be in a lookup table.
+                        // Halo2 calls such Expression a lookup input.
+                        // Halo2 stores these evaluation result sepalately from the assignments in the table, since Halo2 does not need to commit to the evaluations of a lookup input.
+                        // But in the case of CCS+, these evaluation results has to be in Z, and we need to commit to it.
+                        // Thus here I treat a lookup input evaluated at each row as if it's another column.
+                        // I later constrain these lookup input evaluation result columns according to the lookup input Expression, just like we constrain advice columns according to custom gate Expression.
 }
 
 impl Query {
+    // As I said Query is a reference to a cell *relative* to the current row.
+    // This method converts that relative reference to an absolute cell position, given the current row.
     fn cell_position(self, at_row: usize, table_height: usize) -> AbsoluteCellPosition {
         match self {
             Query::Selector(query) => AbsoluteCellPosition {
@@ -58,9 +68,13 @@ impl Query {
     }
 }
 
+// I need to implement this because we'll later use Query as key of a HashMap.
 impl Hash for Query {
     fn hash<H: Hasher>(&self, hasher: &mut H) {
-        // Ignore query_index and care only about the cell position
+        // This implementation hashes information CCS+ cares about, and does not hash information CCS+ doesn't care about.
+        // I do this because I want QueryA == QueryB to hold every time when QueryA and QueryB is a same query from the CCS perspective, ignoring Halo2's menial internal data.
+        // For example query.index is just data Halo2 internally uses to keep track of queries.
+        // So this impl does not hash query.index
 
         match self {
             Self::Fixed(query) => {
@@ -94,7 +108,7 @@ impl Hash for Query {
 
 impl PartialEq for Query {
     fn eq(&self, other: &Self) -> bool {
-        // Ignore query_index and care only about the cell position
+        // For the same reason we ignore query.index
 
         match (self, other) {
             (Self::Fixed(lhs), Self::Fixed(rhs)) => {
@@ -115,12 +129,16 @@ impl PartialEq for Query {
 
 impl Eq for Query {}
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Monomial<F: ark_ff::PrimeField> {
     coefficient: F,
     variables: Vec<Query>,
 }
 
+// Convert a custom gate in Halo2, which is a polynomial, into a list of monomials.
+// We need to first expand the polynomial in order to represent it in CCS.
+// For example to constrain a column to be either 0 or 1 we ofter constrain (ColumnA - 1) * ColumnA = 0 in Halo2.
+// We need to expand the custom gate into 2 monomials: 1 * ColumnA * ColumnA + (-1) * ColumnA = 0
 fn get_monomials<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
     expr: &Expression<HALO2>,
 ) -> Vec<Monomial<ARKWORKS>> {
@@ -320,6 +338,14 @@ impl From<Any> for VirtualColumnType {
     }
 }
 
+// Cell position in a Plonkish table.
+// Unlike Query, which represents a cell position *relative* to the current row, this struct represents an absolute position in the Plonkish table.
+
+// column_index will be assigned for each column_type, starting from 0.
+// For example if we had 1 instance column and 1 advice column, column_index of both will be 0.
+// if we had 0 instance column and 2 advice column, first column_index is 0, second column_index is 1.
+
+// This feels unintuitive but Halo2's internal works that way so I didn't bother to change it.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 struct AbsoluteCellPosition {
     column_type: VirtualColumnType,
@@ -855,6 +881,7 @@ pub fn convert_halo2_circuit<
 mod tests {
     use super::*;
     use crate::tests::primitives::P128Pow5T3 as OrchardNullifier;
+    use ark_pallas::Fq;
     use ark_std::rand::rngs::OsRng;
     use ff::Field;
     use folding_schemes::utils::vec::is_zero_vec;
@@ -869,6 +896,57 @@ mod tests {
     use halo2_proofs::plonk::Error;
     use halo2_proofs::poly::Rotation;
     use std::marker::PhantomData;
+
+    // (ColumnA - 1) * ColumnA = 0
+    // must be expanded into 2 monomials:
+    // 1 * ColumnA * ColumnA + (-1) * ColumnA = 0
+    #[test]
+    fn test_get_monomials() {
+        let subject: Expression<Fp> = Expression::Product(
+            Box::new(Expression::Sum(
+                Box::new(Expression::Advice(AdviceQuery {
+                    index: 0,
+                    column_index: 0,
+                    rotation: Rotation(0),
+                })),
+                Box::new(Expression::Constant(Fp::ONE.neg())),
+            )),
+            Box::new(Expression::Advice(AdviceQuery {
+                index: 1,
+                column_index: 0,
+                rotation: Rotation(0),
+            })),
+        );
+
+        let result: Vec<Monomial<Fq>> = get_monomials(&subject);
+        let must_be = vec![
+            Monomial {
+                coefficient: 1.into(),
+                variables: vec![
+                    Query::Advice(AdviceQuery {
+                        index: 0,
+                        column_index: 0,
+                        rotation: Rotation(0),
+                    }),
+                    Query::Advice(AdviceQuery {
+                        index: 1,
+                        column_index: 0,
+                        rotation: Rotation(0),
+                    }),
+                ],
+            },
+            Monomial {
+                coefficient: (-1).into(),
+                variables: vec![Query::Advice(AdviceQuery {
+                    index: 0,
+                    column_index: 0,
+                    rotation: Rotation(0),
+                })],
+            },
+        ];
+
+        assert_eq!(result, must_be);
+    }
 
     #[test]
     fn test_fibonacci_success() -> Result<(), Error> {
