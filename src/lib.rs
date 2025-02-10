@@ -12,200 +12,25 @@ use halo2_proofs::plonk::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
 
-// Reference to a cell, relative to the current row
-#[derive(Debug, Clone, Copy)]
-enum Query {
-    Fixed(FixedQuery),
-    Advice(AdviceQuery),
-    Instance(InstanceQuery),
-    Selector(Selector),
-    LookupInput(usize), // the index of lookup constraint
+mod query;
+use query::*;
+mod monomial;
+use monomial::*;
 
-                        // Halo2 allows us to constrain an Expression evaluated at each row to be in a lookup table.
-                        // Halo2 calls such Expression a lookup input.
-                        // Halo2 stores these evaluation result sepalately from the assignments in the table, since Halo2 does not need to commit to the evaluations of a lookup input.
-                        // But in the case of CCS+, these evaluation results has to be in Z, and we need to commit to it.
-                        // Thus here I treat a lookup input evaluated at each row as if it's another column.
-                        // I later constrain these lookup input evaluation result columns according to the lookup input Expression, just like we constrain advice columns according to custom gate Expression.
-}
+// Basic flow of the Plonkish -> CCS+ conversion process in this code is
+// 1. Populate HashMap<AbsoluteCellPosition, CCSValue> with the assignments extracted from a Halo2 circuit
+// 2. Modify the HashMap according to copy constraints
+// 3. Populate the Z vector according to HashMap
+// 4. Generate M_j from custom gates extracted from a Halo2 circuit
 
-impl Query {
-    // As I said Query is a reference to a cell *relative* to the current row.
-    // This method converts that relative reference to an absolute cell position, given the current row.
-    fn cell_position(self, at_row: usize, table_height: usize) -> AbsoluteCellPosition {
-        match self {
-            Query::Selector(query) => AbsoluteCellPosition {
-                column_type: VirtualColumnType::Selector,
-                column_index: query.0,
-                row_index: at_row,
-            },
-            Query::Fixed(query) => AbsoluteCellPosition {
-                column_type: VirtualColumnType::Fixed,
-                column_index: query.column_index,
-                row_index: (at_row as i32 + query.rotation.0).rem_euclid(table_height as i32)
-                    as usize,
-            },
-            Query::Instance(query) => AbsoluteCellPosition {
-                column_type: VirtualColumnType::Instance,
-                column_index: query.column_index,
-                row_index: (at_row as i32 + query.rotation.0).rem_euclid(table_height as i32)
-                    as usize,
-            },
-            Query::Advice(query) => AbsoluteCellPosition {
-                column_type: VirtualColumnType::Advice,
-                column_index: query.column_index,
-                row_index: (at_row as i32 + query.rotation.0).rem_euclid(table_height as i32)
-                    as usize,
-            },
-            Query::LookupInput(index) => AbsoluteCellPosition {
-                column_type: VirtualColumnType::LookupInput,
-                column_index: index,
-                row_index: at_row,
-            },
-        }
-    }
-}
-
-// I need to implement this because we'll later use Query as key of a HashMap.
-impl Hash for Query {
-    fn hash<H: Hasher>(&self, hasher: &mut H) {
-        // This implementation hashes information CCS+ cares about, and does not hash information CCS+ doesn't care about.
-        // I do this because I want QueryA == QueryB to hold every time when QueryA and QueryB is a same query from the CCS perspective, ignoring Halo2's menial internal data.
-        // For example query.index is just data Halo2 internally uses to keep track of queries.
-        // So this impl does not hash query.index
-
-        match self {
-            Self::Fixed(query) => {
-                hasher.write(&[0u8]); // enum variant ID
-                hasher.write(&query.rotation.0.to_le_bytes());
-                hasher.write(&query.column_index.to_le_bytes());
-            }
-            Self::Advice(query) => {
-                hasher.write(&[1u8]); // enum variant ID
-                hasher.write(&query.rotation.0.to_le_bytes());
-                hasher.write(&query.column_index.to_le_bytes());
-            }
-            Self::Instance(query) => {
-                hasher.write(&[2u8]); // enum variant ID
-                hasher.write(&query.rotation.0.to_le_bytes());
-                hasher.write(&query.column_index.to_le_bytes());
-            }
-            Self::Selector(query) => {
-                hasher.write(&[3u8]); // enum variant ID
-                hasher.write(&query.0.to_le_bytes());
-            }
-            Self::LookupInput(index) => {
-                hasher.write(&[4u8]);
-                hasher.write(&index.to_le_bytes());
-            }
-        }
-
-        hasher.finish();
-    }
-}
-
-impl PartialEq for Query {
-    fn eq(&self, other: &Self) -> bool {
-        // For the same reason we ignore query.index
-
-        match (self, other) {
-            (Self::Fixed(lhs), Self::Fixed(rhs)) => {
-                lhs.rotation == rhs.rotation && lhs.column_index == rhs.column_index
-            }
-            (Self::Advice(lhs), Self::Advice(rhs)) => {
-                lhs.rotation == rhs.rotation && lhs.column_index == rhs.column_index
-            }
-            (Self::Instance(lhs), Self::Instance(rhs)) => {
-                lhs.rotation == rhs.rotation && lhs.column_index == rhs.column_index
-            }
-            (Self::Selector(lhs), Self::Selector(rhs)) => lhs.0 == rhs.0,
-            (Self::LookupInput(lhs), Self::LookupInput(rhs)) => lhs == rhs,
-            _ => false,
-        }
-    }
-}
-
-impl Eq for Query {}
-
-#[derive(Debug, PartialEq)]
-struct Monomial<F: ark_ff::PrimeField> {
-    coefficient: F,
-    variables: Vec<Query>,
-}
-
-// Convert a custom gate in Halo2, which is a polynomial, into a list of monomials.
-// We need to first expand the polynomial in order to represent it in CCS.
-// For example to constrain a column to be either 0 or 1 we ofter constrain (ColumnA - 1) * ColumnA = 0 in Halo2.
-// We need to expand the custom gate into 2 monomials: 1 * ColumnA * ColumnA + (-1) * ColumnA = 0
-fn get_monomials<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
-    expr: &Expression<HALO2>,
-) -> Vec<Monomial<ARKWORKS>> {
-    match expr {
-        Expression::Constant(constant) => vec![Monomial {
-            coefficient: ARKWORKS::from_le_bytes_mod_order(&constant.to_repr()),
-            variables: vec![],
-        }],
-        Expression::Selector(query) => vec![Monomial {
-            coefficient: 1.into(),
-            variables: vec![Query::Selector(*query)],
-        }],
-        Expression::Advice(query) => vec![Monomial {
-            coefficient: 1.into(),
-            variables: vec![Query::Advice(*query)],
-        }],
-        Expression::Fixed(query) => vec![Monomial {
-            coefficient: 1.into(),
-            variables: vec![Query::Fixed(*query)],
-        }],
-        Expression::Instance(query) => vec![Monomial {
-            coefficient: 1.into(),
-            variables: vec![Query::Instance(*query)],
-        }],
-        Expression::Negated(expr) => get_monomials::<HALO2, ARKWORKS>(expr)
-            .into_iter()
-            .map(|original| Monomial {
-                coefficient: original.coefficient.neg(),
-                variables: original.variables,
-            })
-            .collect(),
-        Expression::Scaled(expr, scalar) => get_monomials::<HALO2, ARKWORKS>(expr)
-            .into_iter()
-            .map(|original| Monomial {
-                coefficient: original.coefficient
-                    * ARKWORKS::from_le_bytes_mod_order(&scalar.to_repr()),
-                variables: original.variables,
-            })
-            .collect(),
-        Expression::Sum(lhs, rhs) => {
-            let mut result = Vec::new();
-            result.extend(get_monomials::<HALO2, ARKWORKS>(lhs));
-            result.extend(get_monomials::<HALO2, ARKWORKS>(rhs));
-            result
-        }
-        Expression::Product(lhs, rhs) => {
-            let lhs_monomials = get_monomials::<HALO2, ARKWORKS>(lhs);
-            let rhs_monomials = get_monomials::<HALO2, ARKWORKS>(rhs);
-            let mut result = Vec::new();
-
-            for lhs_monomial in lhs_monomials.iter() {
-                for rhs_monomial in rhs_monomials.iter() {
-                    let mut variables = Vec::new();
-                    variables.extend(lhs_monomial.variables.iter().copied());
-                    variables.extend(rhs_monomial.variables.iter().copied());
-
-                    result.push(Monomial {
-                        coefficient: lhs_monomial.coefficient * rhs_monomial.coefficient,
-                        variables,
-                    })
-                }
-            }
-
-            result
-        }
-    }
-}
+// Notes on lookup:
+// Halo2 allows us to constrain an Expression evaluated at each row to be in a lookup table.
+// Halo2 calls such Expression a lookup input.
+// Halo2 stores these evaluation result sepalately from the assignments in the table, since Halo2 does not need to commit to the evaluations of a lookup input.
+// But in the case of CCS+, these evaluation results has to be in Z, and we need to commit to it.
+// Thus in this code I treat a lookup input evaluated at each row as if it's another column.
+// I later constrain these lookup input evaluation result columns according to the lookup input Expression, just like we constrain advice columns according to custom gate Expression.
 
 #[derive(Debug, Clone, Copy)]
 enum CCSValue<F: ark_ff::PrimeField> {
@@ -311,66 +136,6 @@ fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
     }
 
     cell_mapping
-}
-
-// I use this Ord impl for witness deduplication.
-// Cells with greater ordering will get deduplicated into cells with less ordering.
-// If there was a copy constraint between an advice cell and an instance cell,
-//   the former will get deduplicated into the latter.
-// If there was a copy constraint between an advice cell and a fixed cell,
-//   the former will get deduplicated into the latter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum VirtualColumnType {
-    LookupInput,
-    Selector,
-    Fixed,
-    Instance,
-    Advice,
-}
-
-impl From<Any> for VirtualColumnType {
-    fn from(value: Any) -> Self {
-        match value {
-            Any::Instance => VirtualColumnType::Instance,
-            Any::Advice => VirtualColumnType::Advice,
-            Any::Fixed => VirtualColumnType::Fixed,
-        }
-    }
-}
-
-// Cell position in a Plonkish table.
-// Unlike Query, which represents a cell position *relative* to the current row, this struct represents an absolute position in the Plonkish table.
-
-// column_index will be assigned for each column_type, starting from 0.
-// For example if we had 1 instance column and 1 advice column, column_index of both will be 0.
-// if we had 0 instance column and 2 advice column, first column_index is 0, second column_index is 1.
-
-// This feels unintuitive but Halo2's internal works that way so I didn't bother to change it.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-struct AbsoluteCellPosition {
-    column_type: VirtualColumnType,
-    column_index: usize,
-    row_index: usize,
-}
-
-// I use this Ord impl for witness deduplication.
-// Cells with greater ordering will get deduplicated into cells with less ordering.
-impl Ord for AbsoluteCellPosition {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.column_type.cmp(&other.column_type) {
-            Ordering::Equal => match self.column_index.cmp(&other.column_index) {
-                Ordering::Equal => self.row_index.cmp(&other.row_index),
-                ordering => ordering,
-            },
-            ordering => ordering,
-        }
-    }
-}
-
-impl PartialOrd for AbsoluteCellPosition {
-    fn partial_cmp(&self, other: &AbsoluteCellPosition) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 // Cells with greater ordering will get deduplicated into cells with less ordering.
@@ -875,64 +640,4 @@ pub fn convert_halo2_circuit<
         .collect();
 
     Ok((ccs_instance, z, L))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ark_pallas::Fq;
-    use ff::Field;
-    use halo2_proofs::pasta::Fp;
-    use halo2_proofs::poly::Rotation;
-
-    // (ColumnA - 1) * ColumnA = 0
-    // must be expanded into 2 monomials:
-    // 1 * ColumnA * ColumnA + (-1) * ColumnA = 0
-    #[test]
-    fn test_get_monomials() {
-        let subject: Expression<Fp> = Expression::Product(
-            Box::new(Expression::Sum(
-                Box::new(Expression::Advice(AdviceQuery {
-                    index: 0,
-                    column_index: 0,
-                    rotation: Rotation(0),
-                })),
-                Box::new(Expression::Constant(Fp::ONE.neg())),
-            )),
-            Box::new(Expression::Advice(AdviceQuery {
-                index: 1,
-                column_index: 0,
-                rotation: Rotation(0),
-            })),
-        );
-
-        let result: Vec<Monomial<Fq>> = get_monomials(&subject);
-        let must_be = vec![
-            Monomial {
-                coefficient: 1.into(),
-                variables: vec![
-                    Query::Advice(AdviceQuery {
-                        index: 0,
-                        column_index: 0,
-                        rotation: Rotation(0),
-                    }),
-                    Query::Advice(AdviceQuery {
-                        index: 1,
-                        column_index: 0,
-                        rotation: Rotation(0),
-                    }),
-                ],
-            },
-            Monomial {
-                coefficient: (-1).into(),
-                variables: vec![Query::Advice(AdviceQuery {
-                    index: 0,
-                    column_index: 0,
-                    rotation: Rotation(0),
-                })],
-            },
-        ];
-
-        assert_eq!(result, must_be);
-    }
 }
