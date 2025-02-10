@@ -205,8 +205,10 @@ fn clean_unused_z<F: ark_ff::PrimeField>(
     let mut last_z_index = 0;
     for z_index in used_z_index.into_iter() {
         if *z_index == last_z_index {
+            // If z_index didn't change, we don't increase z_height
             *z_index = z_height - 1;
         } else {
+            // If z_index change, we increase z_height
             last_z_index = *z_index;
             *z_index = z_height;
             z_height += 1;
