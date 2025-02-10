@@ -18,6 +18,7 @@ use halo2ccs::convert_halo2_circuit;
 use std::collections::HashSet;
 
 // tests for the cases where the lookup input is a complex Expression
+// The code behaves differently depending on if the lookup input is complex or not so I need to test both cases
 
 #[test]
 fn test_less_than_success() -> Result<(), Error> {

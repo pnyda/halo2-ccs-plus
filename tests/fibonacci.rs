@@ -17,6 +17,8 @@ use halo2_proofs::poly::Rotation;
 use halo2ccs::convert_halo2_circuit;
 use std::marker::PhantomData;
 
+// Tests against a simple circuit that has only one custom gate + copy constraints + no lookup
+
 #[test]
 fn test_fibonacci_success() -> Result<(), Error> {
     let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];

@@ -18,6 +18,8 @@ use halo2_proofs::plonk::Instance;
 use halo2ccs::convert_halo2_circuit;
 use std::marker::PhantomData;
 
+// Tests against a complex circuit that has multiple custom gates + copy constraints + no lookup
+
 #[test]
 fn test_poseidon_success() -> Result<(), Error> {
     let message = [Fp::random(OsRng), Fp::random(OsRng)];

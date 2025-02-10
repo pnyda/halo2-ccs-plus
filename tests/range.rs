@@ -14,7 +14,9 @@ use halo2_proofs::poly::Rotation;
 use halo2ccs::convert_halo2_circuit;
 use std::collections::HashSet;
 
-// tests for the cases where the lookup input is a simple query
+// Tests for cases where the lookup input is a simple query
+// The code behaves differently depending on if the lookup input is complex or not so I need to test both cases
+
 #[test]
 fn test_range_success() -> Result<(), Error> {
     let k = 9;
