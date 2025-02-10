@@ -27,8 +27,8 @@ use monomial::*;
 // Notes on lookup:
 // Halo2 allows us to constrain an Expression evaluated at each row to be in a lookup table.
 // Halo2 calls such Expression a lookup input.
-// Halo2 stores these evaluation result sepalately from the assignments in the table, since Halo2 does not need to commit to the evaluations of a lookup input.
-// But in the case of CCS+, these evaluation results has to be in Z, and we need to commit to it.
+// Halo2 stores these evaluation result sepalately from the assignments in the table.
+// But in the case of CCS+, these evaluation results has to be in Z, and we need to commit to it together with other columns.
 // Thus in this code I treat a lookup input evaluated at each row as if it's another column.
 // I later constrain these lookup input evaluation result columns according to the lookup input Expression, just like we constrain advice columns according to custom gate Expression.
 
