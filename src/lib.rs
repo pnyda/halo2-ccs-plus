@@ -78,7 +78,9 @@ fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
 
     for (column_index, column) in fixed.into_iter().enumerate() {
         for (row_index, cell) in column.into_iter().enumerate() {
-            // TODO: Is it okay to initialize unassigned fixed cell with 0?
+            // Here we initialize unassigned fixed cell with 0.
+            // This mimics Halo2's behavior.
+            // https://github.com/zcash/halo2/blob/fed6b000857f27e23ddb07454da8bde4697204f7/halo2_proofs/src/poly/domain.rs#L189
             let value = ARKWORKS::from_le_bytes_mod_order(&cell.unwrap_or(0.into()).to_repr());
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Fixed,
@@ -410,8 +412,9 @@ fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeFie
         .max()
         .expect("|Z| must be above 2");
 
-    // Unassigned cell in the original Plonkish table will be initialized with 0.
-    // TODO: Is this an appropriate behavior? Should I randomize it?
+    // Here we initialize unassigned cells in the original Plonkish table with 0.
+    // This mimics Halo2's behavior.
+    // https://github.com/zcash/halo2/issues/614
     let mut z: Vec<ARKWORKS> = vec![0.into(); z_height];
     z[0] = 1.into();
 
@@ -609,7 +612,11 @@ pub fn convert_halo2_circuit<
                             &|lhs, constant| lhs.map(|lhs| lhs * constant),
                         )
                         .unwrap_or(0.into());
-                    // TODO: Is it ok to initialize unassigned cell in a lookup table with 0?
+
+                    // Here we initialize unassigned cells in a lookup table with 0.
+                    // This mimics Halo2's behavior.
+                    // https://github.com/zcash/halo2/blob/fed6b000857f27e23ddb07454da8bde4697204f7/halo2_proofs/src/circuit/floor_planner/single_pass.rs#L180
+
                     ARKWORKS::from_le_bytes_mod_order(&scalar.to_repr())
                 })
                 .collect()
