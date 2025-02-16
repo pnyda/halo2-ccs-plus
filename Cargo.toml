@@ -14,3 +14,4 @@ ark-std = { version = "0.5.0" }
 ff = "0.13"
 ark-pallas = { version = "0.5.0" }
 halo2_gadgets = { git = "https://github.com/pnyda/halo2.git", rev = "bdc6f1cb47ff96bf0696fd585bebd6e7700c5736" }
+ark-poly = { version = "0.5.0" }

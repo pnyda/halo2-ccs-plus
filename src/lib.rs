@@ -17,6 +17,7 @@ mod query;
 use query::*;
 mod monomial;
 use monomial::*;
+mod lookup;
 
 // Basic flow of the Plonkish -> CCS+ conversion process in this code is
 // 1. Populate HashMap<AbsoluteCellPosition, CCSValue> with the assignments extracted from a Halo2 circuit

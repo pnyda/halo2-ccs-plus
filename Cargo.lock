@@ -604,6 +604,7 @@ version = "0.1.0"
 dependencies = [
  "ark-ff",
  "ark-pallas",
+ "ark-poly",
  "ark-std",
  "ff",
  "folding-schemes",
