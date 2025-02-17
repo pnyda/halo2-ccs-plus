@@ -552,6 +552,8 @@ pub fn convert_halo2_circuit<
         .map(|x| x.as_slice())
         .collect::<Vec<_>>();
 
+    dbg!(cell_dumper.copy_constraints.len());
+
     let lookups = dump_lookups::<HALO2, C>()?;
     let lookup_inputs: Vec<Expression<HALO2>> =
         lookups.iter().map(|(input, _)| input).cloned().collect();
@@ -624,7 +626,7 @@ pub fn convert_halo2_circuit<
         })
         .collect();
 
-    let L = (0..lookups.len())
+    let LandT = (0..lookups.len())
         .map(|lookup_index| {
             (
                 cell_mapping
@@ -649,5 +651,14 @@ pub fn convert_halo2_circuit<
         })
         .collect();
 
-    Ok((ccs_instance, z, L))
+    println!(
+        "The number of advice cells in the original Plonkish table: {}",
+        advice.len() * advice[0].len()
+    );
+    println!(
+        "The number of witnesses in the transpiled CCS circuit: {}",
+        z.len() - ccs_instance.l
+    );
+
+    Ok((ccs_instance, z, LandT))
 }
