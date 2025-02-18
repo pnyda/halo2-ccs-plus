@@ -33,7 +33,7 @@ mod lookup;
 // Thus in this code I treat a lookup input evaluated at each row as if it's another column.
 // I later constrain these lookup input evaluation result columns according to the lookup input Expression, just like we constrain advice columns according to custom gate Expression.
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CCSValue<F: ark_ff::PrimeField> {
     InsideZ(usize), // z_index
     InsideM(F),     // fixed value
@@ -206,6 +206,10 @@ fn clean_unused_z<F: ark_ff::PrimeField>(
     // So we have to sort it here.
     used_z_index.sort();
 
+    // Traverse the sorted list of used z_index.
+    // When we encounter the change in z_index, we increase z_height, and update the z_index to be z_height - 1.
+    // When z_index doesn't change, update it to be z_height - 1.
+
     let mut z_height = 1;
     let mut last_z_index = 0;
     for z_index in used_z_index.into_iter() {
@@ -221,6 +225,103 @@ fn clean_unused_z<F: ark_ff::PrimeField>(
     }
 
     z_height
+}
+
+#[cfg(test)]
+#[test]
+fn test_clean_unused_z() {
+    // In this test keys of the hashmap does not matter. So I'm putting random keys.
+
+    use ark_pallas::Fq;
+    let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+    actual.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(1),
+    );
+    actual.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(1),
+    );
+    // In this case suppose z_index=2 was deduplicated into z_index=1.
+    actual.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideZ(3),
+    );
+    actual.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 3,
+        },
+        CCSValue::InsideZ(4),
+    );
+    actual.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 4,
+        },
+        CCSValue::InsideZ(4),
+    );
+
+    clean_unused_z(&mut actual);
+
+    let mut expect = HashMap::new();
+    expect.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(1),
+    );
+    expect.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(1),
+    );
+    // In this case suppose z_index=2 was deduplicated into z_index=1.
+    expect.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideZ(2),
+    );
+    expect.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 3,
+        },
+        CCSValue::InsideZ(3),
+    );
+    expect.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 4,
+        },
+        CCSValue::InsideZ(3),
+    );
+
+    assert_eq!(actual, expect);
 }
 
 fn generate_mj<F: ark_ff::PrimeField>(
