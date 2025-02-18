@@ -161,7 +161,7 @@ fn deduplicate_witness<F: ark_ff::PrimeField>(
                     row_index: copy_constraint.to_row_index,
                 };
 
-                // The first element of the tuple gets deduplicated into the second element of the tuple
+                // The second element of the tuple gets deduplicated into the first element of the tuple
                 match cell1.cmp(&cell2) {
                     Ordering::Equal => None,
                     Ordering::Less => Some((cell1, cell2)),
@@ -175,9 +175,11 @@ fn deduplicate_witness<F: ark_ff::PrimeField>(
     // B = A
     // cell_mapping[C] should be z_index of A.
     // We achieve this by sorting the copy constraints
-    // A <- B
-    // B <- C
+    // (A, B)
+    // (B, C)
     // and applying witness deduplication for AbsoluteCellPosition with less ordering first
+    // cell_mapping[B] = cell_mapping[A]
+    // cell_mapping[C] = cell_mapping[B]
     copy_constraints_sorted.sort();
 
     for (deduplicate_into, deduplicate_from) in copy_constraints_sorted.into_iter() {
