@@ -188,6 +188,123 @@ fn deduplicate_witness<F: ark_ff::PrimeField>(
     }
 }
 
+#[cfg(test)]
+#[test]
+fn test_duplicate_witness() {
+    use ark_pallas::Fq;
+
+    let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+    actual.insert(
+        // cell A
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(1),
+    );
+    actual.insert(
+        // cell B
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(2),
+    );
+    actual.insert(
+        // cell C
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideZ(3),
+    );
+    actual.insert(
+        // cell D
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 3,
+        },
+        CCSValue::InsideZ(4),
+    );
+
+    let copy_constraints = vec![
+        CopyConstraint {
+            // B = C
+            from_column_type: Any::Advice,
+            from_column_index: 0,
+            from_row_index: 2,
+            to_column_type: Any::Advice,
+            to_column_index: 0,
+            to_row_index: 1,
+        },
+        CopyConstraint {
+            // C = D
+            from_column_type: Any::Advice,
+            from_column_index: 0,
+            from_row_index: 3,
+            to_column_type: Any::Advice,
+            to_column_index: 0,
+            to_row_index: 2,
+        },
+        CopyConstraint {
+            // B = A
+            from_column_type: Any::Advice,
+            from_column_index: 0,
+            from_row_index: 0,
+            to_column_type: Any::Advice,
+            to_column_index: 0,
+            to_row_index: 1,
+        },
+    ];
+
+    deduplicate_witness(&mut actual, &copy_constraints);
+
+    // All get deduplicated into A
+    let mut expect = HashMap::new();
+    expect.insert(
+        // cell A
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(1),
+    );
+    expect.insert(
+        // cell B
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(1),
+    );
+    expect.insert(
+        // cell C
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideZ(1),
+    );
+    expect.insert(
+        // cell D
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 3,
+        },
+        CCSValue::InsideZ(1),
+    );
+
+    assert_eq!(actual, expect);
+}
+
 // The witness deduplication will make some z_index unused
 // Thus we have to reassign all z_index, to skip unused indexes
 // Returns the height of Z vector after the clean up
