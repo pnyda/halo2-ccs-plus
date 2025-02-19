@@ -441,9 +441,6 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
         }
     }
 
-    // TODO: Implement deduplication for M matrices.
-    // In the current implementation same matrices might appear multiple times.
-
     CCS {
         m,
         n: z_height,
@@ -465,11 +462,11 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
     lookup_inputs: &[Expression<HALO2>],
 ) -> CCS<F> {
     // TODO: reduce_witnesses(reduce_t(reduce_degree(generate_naive_ccs_instance(custom_gates, cell_mapping, lookup_inputs))))
-    reduce_degree(generate_naive_ccs_instance(
+    reduce_t(reduce_degree(generate_naive_ccs_instance(
         custom_gates,
         cell_mapping,
         lookup_inputs,
-    ))
+    )))
 }
 
 fn reduce_degree<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
@@ -581,6 +578,34 @@ fn reduce_degree<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
     return CCS {
         t: M.len(),
         d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(1),
+        M,
+        S,
+        ..ccs
+    };
+}
+
+fn reduce_t<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
+    let mut M: Vec<SparseMatrix<F>> = Vec::new();
+    let mut S: Vec<Vec<usize>> = Vec::new();
+
+    for monomial in ccs.S.iter() {
+        S.push(Vec::new());
+
+        for index in monomial {
+            let mj = &ccs.M[*index];
+            if let Some(j) = M.iter().position(|existing| mj == existing) {
+                // If the matrix is already in M, we'll reuse the matrix.
+                S.last_mut().unwrap().push(j);
+            } else {
+                // If the matrix is not yet in M, we'll put it in there.
+                S.last_mut().unwrap().push(M.len());
+                M.push(mj.clone());
+            }
+        }
+    }
+
+    return CCS {
+        t: M.len(),
         M,
         S,
         ..ccs
