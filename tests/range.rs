@@ -9,6 +9,7 @@ use halo2_proofs::plonk::Circuit;
 use halo2_proofs::plonk::Column;
 use halo2_proofs::plonk::ConstraintSystem;
 use halo2_proofs::plonk::Error;
+use halo2_proofs::plonk::Expression;
 use halo2_proofs::plonk::TableColumn;
 use halo2_proofs::poly::Rotation;
 use halo2ccs::convert_halo2_circuit;
@@ -85,6 +86,15 @@ impl Circuit<Fp> for RangeCircuit {
     fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
         let advice = meta.advice_column();
         let table = meta.lookup_table_column();
+
+        // Without this reduce_n will remove these advice cells,
+        // because there's no arithmetic constraints applied to these advice cells.
+        // TODO: Is it appropriate that a cell that has to be in lookup table will get removed?
+        // All lookup table in zcash/halo2 is fixed, so I feel like no sane person would write a circuit that has only lookup constraints with no arithmetic constraint
+        meta.create_gate("meaningless constraint", |gate| {
+            let advice = gate.query_advice(advice, Rotation::cur());
+            vec![Expression::Scaled(Box::new(advice.clone()), 0.into())]
+        });
 
         meta.lookup(|gate| {
             let advice = gate.query_advice(advice, Rotation::cur());
