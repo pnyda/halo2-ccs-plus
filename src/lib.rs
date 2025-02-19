@@ -341,6 +341,7 @@ fn generate_mj<F: ark_ff::PrimeField>(
     mj
 }
 
+// Generate a CCS instance that works, but unoptimized.
 fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::PrimeField>(
     custom_gates: &[Expression<HALO2>],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
@@ -458,17 +459,20 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
 
 fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::PrimeField>(
     custom_gates: &[Expression<HALO2>],
-    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
+    cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
     lookup_inputs: &[Expression<HALO2>],
 ) -> CCS<F> {
-    // TODO: reduce_witnesses(reduce_t(reduce_degree(generate_naive_ccs_instance(custom_gates, cell_mapping, lookup_inputs))))
-    reduce_t(reduce_d(generate_naive_ccs_instance(
+    let mut ccs = reduce_t(reduce_d(generate_naive_ccs_instance(
         custom_gates,
         cell_mapping,
         lookup_inputs,
-    )))
+    )));
+    reduce_n(&mut ccs, cell_mapping);
+    ccs
 }
 
+// This function optimizes a CCS instance.
+// Reduces the degree of a CCS instance.
 fn reduce_d<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
@@ -584,6 +588,8 @@ fn reduce_d<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
     };
 }
 
+// This function optimizes a CCS instance.
+// Reduces the number of M matrices in a CCS instance.
 fn reduce_t<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
@@ -610,6 +616,83 @@ fn reduce_t<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
         S,
         ..ccs
     };
+}
+
+// This function optimizes a CCS instance.
+// Reduces the number of witnesses.
+fn reduce_n<F: ark_ff::PrimeField>(
+    ccs: &mut CCS<F>,
+    cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
+) {
+    // There are 2 ways an element at (x,y) in a SparseMatrix can be 0
+    // 1. SparseMatrix.coeffs[y] contains (0, x)
+    // 2. SparseMatrix.coeffs[y] does not contain (0, x), but (non-0, x) doesn't exist either, so it's implied that the element at (x,y) is 0
+    // It's cumbersome to handle 2 cases so here we sanitize SparseMatrix, into the case 2.
+    for mj in ccs.M.iter_mut() {
+        for row in mj.coeffs.iter_mut() {
+            row.retain(|elem| elem.0 != 0.into());
+        }
+    }
+
+    let mut used_z: HashSet<usize> = HashSet::new();
+    used_z.insert(0);
+
+    for mj in ccs.M.iter() {
+        for row in mj.coeffs.iter() {
+            for elem in row.iter() {
+                // When we encounter a non-0 element in M matrices, mark the column index of that element.
+                used_z.insert(elem.1);
+            }
+        }
+    }
+
+    let mut used_z: Vec<usize> = used_z.into_iter().collect();
+    used_z.sort();
+    // for used_z[i] that is an old z_index, i is the new z_index
+
+    // Update M matrices based on the information we have gathered
+    for mj in ccs.M.iter_mut() {
+        mj.n_cols = used_z.len();
+
+        for row in mj.coeffs.iter_mut() {
+            for elem in row.iter_mut() {
+                let new_z_index = used_z
+                    .iter()
+                    .position(|old_z_index| *old_z_index == elem.1)
+                    .unwrap();
+                // It's safe to unwrap here because we have sanitized M matrices earlier.
+                elem.1 = new_z_index;
+            }
+        }
+    }
+
+    let mut unconstrained_cells: Vec<AbsoluteCellPosition> = Vec::new();
+
+    // Update cell_mapping based on the information we have gathered
+    // This is needed because the lookup implementation needs that we can query cell_mapping[cell position] and get the z_index of that cell.
+    // If we don't do this the consistency between cell_mapping and Z breaks.
+    for (cell_position, ccs_value) in cell_mapping.iter_mut() {
+        if let CCSValue::InsideZ(z_index) = ccs_value {
+            if let Some(new_z_index) = used_z
+                .iter()
+                .position(|old_z_index| *old_z_index == *z_index)
+            {
+                *z_index = new_z_index;
+            } else {
+                unconstrained_cells.push(*cell_position);
+            }
+        }
+    }
+
+    for unconstrained_cell in unconstrained_cells.iter() {
+        cell_mapping.remove(unconstrained_cell);
+    }
+
+    ccs.n = used_z.len();
+    ccs.l -= unconstrained_cells
+        .into_iter()
+        .filter(|cell| cell.column_type == VirtualColumnType::Instance)
+        .count();
 }
 
 fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
@@ -774,7 +857,7 @@ pub fn convert_halo2_circuit<
     let lookups = dump_lookups::<HALO2, C>()?;
     let lookup_inputs: Vec<Expression<HALO2>> =
         lookups.iter().map(|(input, _)| input).cloned().collect();
-    let cell_mapping = generate_cell_mapping(
+    let mut cell_mapping = generate_cell_mapping(
         &instance_option,
         &advice,
         &fixed,
@@ -785,7 +868,7 @@ pub fn convert_halo2_circuit<
 
     let custom_gates = dump_gates::<HALO2, C>()?;
     let ccs_instance: CCS<ARKWORKS> =
-        generate_ccs_instance(&custom_gates, &cell_mapping, &lookup_inputs);
+        generate_ccs_instance(&custom_gates, &mut cell_mapping, &lookup_inputs);
     let z: Vec<ARKWORKS> = generate_z(
         &selectors,
         &fixed,
