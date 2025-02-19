@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 use ark_std::log2;
 use folding_schemes::arith::ccs::CCS;
+use folding_schemes::utils::vec::hadamard;
+use folding_schemes::utils::vec::mat_vec_mul;
 use folding_schemes::utils::vec::SparseMatrix;
 use halo2_proofs::circuit::Value;
 use halo2_proofs::dump::dump_gates;
@@ -52,28 +54,29 @@ fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
     lookup_inputs: &[Expression<HALO2>],
 ) -> HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>> {
     let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>> = HashMap::new();
+    let mut z_height = 1;
 
     for (column_index, column) in instance.into_iter().enumerate() {
         for (row_index, _) in column.into_iter().enumerate() {
-            let z_index = 1 + cell_mapping.len();
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Instance,
                 column_index,
                 row_index,
             };
-            cell_mapping.insert(cell_position, CCSValue::InsideZ(z_index));
+            cell_mapping.insert(cell_position, CCSValue::InsideZ(z_height));
+            z_height += 1;
         }
     }
 
     for (column_index, column) in advice.into_iter().enumerate() {
         for (row_index, _) in column.into_iter().enumerate() {
-            let z_index = 1 + cell_mapping.len();
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Advice,
                 column_index,
                 row_index,
             };
-            cell_mapping.insert(cell_position, CCSValue::InsideZ(z_index));
+            cell_mapping.insert(cell_position, CCSValue::InsideZ(z_height));
+            z_height += 1;
         }
     }
 
@@ -106,7 +109,6 @@ fn generate_cell_mapping<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
 
     // Next, incorporate the copy constraints into the mapping.
     deduplicate_witness(&mut cell_mapping, copy_constraints);
-    let mut z_height = clean_unused_z(&mut cell_mapping);
 
     // Next, incorporate lookup constraints into the mapping.
     let table_height = advice[0].len();
@@ -305,142 +307,6 @@ fn test_duplicate_witness() {
     assert_eq!(actual, expect);
 }
 
-// The witness deduplication will make some z_index unused
-// Thus we have to reassign all z_index, to skip unused indexes
-// Returns the height of Z vector after the clean up
-fn clean_unused_z<F: ark_ff::PrimeField>(
-    cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
-) -> usize {
-    let mut used_z_index: Vec<&mut usize> = cell_mapping
-        .values_mut()
-        .filter_map(|ccs_value| match ccs_value {
-            CCSValue::InsideM(_) => None,
-            CCSValue::InsideZ(z_index) => Some(z_index),
-        })
-        .collect();
-
-    // HashMap.values_mut() returns an iterator with undefined order.
-    // So we have to sort it here.
-    used_z_index.sort();
-
-    // Traverse the sorted list of used z_index.
-    // When we encounter the change in z_index, we increase z_height, and update the z_index to be z_height - 1.
-    // When z_index doesn't change, update it to be z_height - 1.
-
-    let mut z_height = 1;
-    let mut last_z_index = 0;
-    for z_index in used_z_index.into_iter() {
-        if *z_index == last_z_index {
-            // If z_index didn't change, we don't increase z_height
-            *z_index = z_height - 1;
-        } else {
-            // If z_index change, we increase z_height
-            last_z_index = *z_index;
-            *z_index = z_height;
-            z_height += 1;
-        }
-    }
-
-    z_height
-}
-
-#[cfg(test)]
-#[test]
-fn test_clean_unused_z() {
-    // In this test keys of the hashmap does not matter. So I'm putting random keys.
-
-    use ark_pallas::Fq;
-    let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
-    actual.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(1),
-    );
-    actual.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideZ(1),
-    );
-    // In this case suppose z_index=2 was deduplicated into z_index=1.
-    actual.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(3),
-    );
-    actual.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 3,
-        },
-        CCSValue::InsideZ(4),
-    );
-    actual.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 4,
-        },
-        CCSValue::InsideZ(4),
-    );
-
-    clean_unused_z(&mut actual);
-
-    let mut expect = HashMap::new();
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(1),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideZ(1),
-    );
-    // In this case suppose z_index=2 was deduplicated into z_index=1.
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(2),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 3,
-        },
-        CCSValue::InsideZ(3),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 4,
-        },
-        CCSValue::InsideZ(3),
-    );
-
-    assert_eq!(actual, expect);
-}
-
 fn generate_mj<F: ark_ff::PrimeField>(
     query: Query,
     table_height: usize,
@@ -533,10 +399,18 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
 
     let m = gates.len() * table_height;
 
-    // A map from (custom gate ID, queried column type, queried column index, rotation) -> M_j
-    let mut m_map: HashMap<(usize, Query), SparseMatrix<F>> = HashMap::new();
+    let mut M: Vec<SparseMatrix<F>> = Vec::new();
+    let mut c: Vec<F> = Vec::new();
+    let mut S: Vec<Vec<usize>> = Vec::new();
+
     for (gate_index, monomials) in gates.iter().enumerate() {
         for monomial in monomials.iter() {
+            c.push(monomial.coefficient);
+            S.push(Vec::new());
+
+            let mut mj_for_z: Vec<SparseMatrix<F>> = Vec::new();
+            let mut mj_for_fixed: Vec<SparseMatrix<F>> = Vec::new();
+
             for query in monomial.variables.iter() {
                 // Shift the m_j down
 
@@ -564,41 +438,96 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
                 new_coeffs[y_offset..(y_offset + mj.coeffs.len())].clone_from_slice(&mj.coeffs);
                 mj.coeffs = new_coeffs;
 
-                m_map.insert((gate_index, *query), mj);
+                if let Query::Fixed(_) | Query::Selector(_) = query {
+                    mj_for_fixed.push(mj);
+                } else {
+                    mj_for_z.push(mj);
+                }
+            }
+
+            if 0 >= mj_for_fixed.len() {
+                // When a monomial has no query into fixed columns, we add M matrices into the CCS instance.
+                // This is the simplest case.
+                S.last_mut()
+                    .unwrap()
+                    .extend(M.len()..(M.len() + mj_for_z.len()));
+                M.extend(mj_for_z);
+            } else {
+                // Consider the case where a monomial has multiple queries into fixed columns.
+                // custom gate: FixedColumn1 * FixedColumn2 * AdviceColumn1 = 0
+                // Then a naive implementation would generate 2 M matrices for fixed columns, and 1 for an advice column,
+                // We *batch* the M matrices for fixed columns, by multiplying it beforehand, and generate one single M matrix for multiple fixed columns.
+                // This way we can reduce the degree of the custom gate in the CCS instance.
+                let batched_vec: Vec<F> = mj_for_fixed
+                    .into_iter()
+                    .map(|mj| {
+                        // only the first column of a M matrix for a fixed column is filled.
+                        // So this way I can get the first column of mj as a vector
+                        mat_vec_mul(&mj, &vec![1.into(); mj.n_cols]).unwrap()
+                    })
+                    .reduce(|acc, new| hadamard(&acc, &new).unwrap())
+                    .unwrap();
+                // By the condition of the if clause 0 < mj_for_fixed.len() so this reduce will never return None.
+
+                if 0 >= mj_for_z.len() {
+                    // When a monomial has no query into advice/instance columns, we'll add the batched M matrix to the CCS instance, and we're done.
+                    let mut batched_mj: SparseMatrix<F> = SparseMatrix::empty();
+                    batched_mj.n_cols = z_height;
+                    batched_mj.n_rows = m;
+                    batched_mj.coeffs = batched_vec.into_iter().map(|x| vec![(x, 0)]).collect();
+
+                    S.last_mut().unwrap().push(M.len());
+                    M.push(batched_mj);
+                } else {
+                    // When a monomial has queries into both fixed/selector columns and advice/instance columns, we can further batch M matrices.
+                    // By baking the fixed multiplication into one of the M matrices for advice/instance columns.
+                    mj_for_z.first_mut().unwrap().coeffs = mj_for_z
+                        .first()
+                        .unwrap()
+                        .coeffs
+                        .iter()
+                        .zip(batched_vec.iter())
+                        .map(|(mj_row, multiply_row_by)| {
+                            mj_row
+                                .into_iter()
+                                .map(|(elem, pos)| (*elem * multiply_row_by, *pos))
+                                .collect()
+                        })
+                        .collect();
+
+                    for mj in mj_for_z.iter_mut().skip(1) {
+                        // Consider a custom gate F1 * A1 * A2 = 0
+                        // where F1 is a fixed column, A1 and A2 are advice columns.
+                        // In this case, baking the fixed multiplication into M matrices for both A1 and A2 will result in redundant double multiplications.
+                        // However, when a fixed cell takes a value 0, it's okay to bake the fixed 0 multiplication into M matrices for both A1 and A2, since 0 * A1 * A2 = 0 * A1 * 0 * A2.
+                        // So we do it here.
+                        // You might ask why we need to do this.
+                        // It will become important when we later implement detection of unused witnesses in Z.
+                        for (row_mj, multiply_row_by) in
+                            mj.coeffs.iter_mut().zip(batched_vec.iter())
+                        {
+                            if *multiply_row_by == 0.into() {
+                                *row_mj = row_mj
+                                    .into_iter()
+                                    .map(|(_, pos)| (0.into(), *pos))
+                                    .collect();
+                            }
+                        }
+                    }
+
+                    // Then we add M matrices for advice/instance columns into the CCS instance.
+                    // We no longer need to add M matrices for fixed columns to the CCS instance because it's already baked into the M matrices for advice/instance columns.
+                    S.last_mut()
+                        .unwrap()
+                        .extend(M.len()..(M.len() + mj_for_z.len()));
+                    M.extend(mj_for_z);
+                }
             }
         }
     }
-    let m_pair: Vec<((usize, Query), SparseMatrix<F>)> = m_map.into_iter().collect();
 
-    let c: Vec<F> = gates
-        .iter()
-        .flat_map(|monomials| monomials.iter().map(|monomial| monomial.coefficient))
-        .collect();
-    let S: Vec<Vec<usize>> = gates
-        .iter()
-        .enumerate()
-        .flat_map(|(gate_index1, monomials)| {
-            monomials
-                .iter()
-                .map(|monomial| {
-                    monomial
-                        .variables
-                        .iter()
-                        .map(|query1| {
-                            let j = m_pair
-                                .iter()
-                                .position(|((gate_index2, query2), _)| {
-                                    gate_index1 == *gate_index2 && query1 == query2
-                                })
-                                .unwrap();
-                            j
-                        })
-                        .collect()
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    let M: Vec<SparseMatrix<F>> = m_pair.into_iter().map(|(_, mat)| mat).collect();
+    // TODO: Implement deduplication for M matrices.
+    // In the current implementation same matrices might appear multiple times.
 
     CCS {
         m,
@@ -609,9 +538,9 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
         d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(1),
         s: log2(table_height) as usize,
         s_prime: log2(z_height) as usize,
-        M: M,
-        S: S,
-        c: c,
+        M,
+        S,
+        c,
     }
 }
 
