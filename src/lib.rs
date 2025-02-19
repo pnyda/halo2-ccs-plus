@@ -462,14 +462,14 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
     lookup_inputs: &[Expression<HALO2>],
 ) -> CCS<F> {
     // TODO: reduce_witnesses(reduce_t(reduce_degree(generate_naive_ccs_instance(custom_gates, cell_mapping, lookup_inputs))))
-    reduce_t(reduce_degree(generate_naive_ccs_instance(
+    reduce_t(reduce_d(generate_naive_ccs_instance(
         custom_gates,
         cell_mapping,
         lookup_inputs,
     )))
 }
 
-fn reduce_degree<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
+fn reduce_d<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
 
