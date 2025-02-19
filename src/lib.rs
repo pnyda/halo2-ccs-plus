@@ -341,7 +341,7 @@ fn generate_mj<F: ark_ff::PrimeField>(
     mj
 }
 
-fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::PrimeField>(
+fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::PrimeField>(
     custom_gates: &[Expression<HALO2>],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
     lookup_inputs: &[Expression<HALO2>],
@@ -408,9 +408,6 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
             c.push(monomial.coefficient);
             S.push(Vec::new());
 
-            let mut mj_for_z: Vec<SparseMatrix<F>> = Vec::new();
-            let mut mj_for_fixed: Vec<SparseMatrix<F>> = Vec::new();
-
             for query in monomial.variables.iter() {
                 // Shift the m_j down
 
@@ -438,90 +435,8 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
                 new_coeffs[y_offset..(y_offset + mj.coeffs.len())].clone_from_slice(&mj.coeffs);
                 mj.coeffs = new_coeffs;
 
-                if let Query::Fixed(_) | Query::Selector(_) = query {
-                    mj_for_fixed.push(mj);
-                } else {
-                    mj_for_z.push(mj);
-                }
-            }
-
-            if 0 >= mj_for_fixed.len() {
-                // When a monomial has no query into fixed columns, we add M matrices into the CCS instance.
-                // This is the simplest case.
-                S.last_mut()
-                    .unwrap()
-                    .extend(M.len()..(M.len() + mj_for_z.len()));
-                M.extend(mj_for_z);
-            } else {
-                // Consider the case where a monomial has multiple queries into fixed columns.
-                // custom gate: FixedColumn1 * FixedColumn2 * AdviceColumn1 = 0
-                // Then a naive implementation would generate 2 M matrices for fixed columns, and 1 for an advice column,
-                // We *batch* the M matrices for fixed columns, by multiplying it beforehand, and generate one single M matrix for multiple fixed columns.
-                // This way we can reduce the degree of the custom gate in the CCS instance.
-                let batched_vec: Vec<F> = mj_for_fixed
-                    .into_iter()
-                    .map(|mj| {
-                        // only the first column of a M matrix for a fixed column is filled.
-                        // So this way I can get the first column of mj as a vector
-                        mat_vec_mul(&mj, &vec![1.into(); mj.n_cols]).unwrap()
-                    })
-                    .reduce(|acc, new| hadamard(&acc, &new).unwrap())
-                    .unwrap();
-                // By the condition of the if clause 0 < mj_for_fixed.len() so this reduce will never return None.
-
-                if 0 >= mj_for_z.len() {
-                    // When a monomial has no query into advice/instance columns, we'll add the batched M matrix to the CCS instance, and we're done.
-                    let mut batched_mj: SparseMatrix<F> = SparseMatrix::empty();
-                    batched_mj.n_cols = z_height;
-                    batched_mj.n_rows = m;
-                    batched_mj.coeffs = batched_vec.into_iter().map(|x| vec![(x, 0)]).collect();
-
-                    S.last_mut().unwrap().push(M.len());
-                    M.push(batched_mj);
-                } else {
-                    // When a monomial has queries into both fixed/selector columns and advice/instance columns, we can further batch M matrices.
-                    // By baking the fixed multiplication into one of the M matrices for advice/instance columns.
-                    mj_for_z.first_mut().unwrap().coeffs = mj_for_z
-                        .first()
-                        .unwrap()
-                        .coeffs
-                        .iter()
-                        .zip(batched_vec.iter())
-                        .map(|(mj_row, multiply_row_by)| {
-                            mj_row
-                                .into_iter()
-                                .map(|(elem, pos)| (*elem * multiply_row_by, *pos))
-                                .collect()
-                        })
-                        .collect();
-
-                    for mj in mj_for_z.iter_mut().skip(1) {
-                        // Consider a custom gate F1 * A1 * A2 = 0
-                        // where F1 is a fixed column, A1 and A2 are advice columns.
-                        // In this case, baking the fixed multiplication into M matrices for both A1 and A2 will result in redundant double multiplications.
-                        // However, when a fixed cell takes a value 0, it's okay to bake the fixed 0 multiplication into M matrices for both A1 and A2, since 0 * A1 * A2 = 0 * A1 * 0 * A2.
-                        // So we do it here.
-                        // You might ask why we need to do this.
-                        // It will become important when we later implement detection of unused witnesses in Z.
-                        for (row_mj, multiply_row_by) in
-                            mj.coeffs.iter_mut().zip(batched_vec.iter())
-                        {
-                            if *multiply_row_by == 0.into() {
-                                *row_mj = row_mj
-                                    .into_iter()
-                                    .map(|(_, pos)| (0.into(), *pos))
-                                    .collect();
-                            }
-                        }
-                    }
-
-                    // Then we add M matrices for advice/instance columns into the CCS instance.
-                    // We no longer need to add M matrices for fixed columns to the CCS instance because it's already baked into the M matrices for advice/instance columns.
-                    S.last_mut()
-                        .unwrap()
-                        .extend(M.len()..(M.len() + mj_for_z.len()));
-                    M.extend(mj_for_z);
-                }
+                S.last_mut().unwrap().push(M.len());
+                M.push(mj);
             }
         }
     }
@@ -542,6 +457,145 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
         S,
         c,
     }
+}
+
+fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::PrimeField>(
+    custom_gates: &[Expression<HALO2>],
+    cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
+    lookup_inputs: &[Expression<HALO2>],
+) -> CCS<F> {
+    // TODO: reduce_witnesses(reduce_t(reduce_degree(generate_naive_ccs_instance(custom_gates, cell_mapping, lookup_inputs))))
+    reduce_degree(generate_naive_ccs_instance(
+        custom_gates,
+        cell_mapping,
+        lookup_inputs,
+    ))
+}
+
+fn reduce_degree<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
+    let mut M: Vec<SparseMatrix<F>> = Vec::new();
+    let mut S: Vec<Vec<usize>> = Vec::new();
+
+    for monomial in ccs.S.iter() {
+        S.push(Vec::new());
+
+        let mj_for_monomial: Vec<&SparseMatrix<F>> =
+            monomial.iter().map(|index| &ccs.M[*index]).collect();
+        // M matrices generated from FixedQuery or Selector
+        let mj_static: Vec<&SparseMatrix<F>> = mj_for_monomial
+            .iter()
+            .copied()
+            .filter(|mj| {
+                mj.coeffs.iter().all(|row| {
+                    // Either the row is a 0 vector, or only the first element of the row is filled
+                    row.iter().all(|elem| {
+                        F::from(0) == elem.0 // either the value is 0
+                        || elem.1 == 0 // or the row index is 0
+                    })
+                })
+            })
+            .collect();
+        // M matrices generated from AdviceQuery or InstanceQuery
+        let mut mj_dynamic: Vec<SparseMatrix<F>> = mj_for_monomial
+            .iter()
+            .copied()
+            .filter(|mj| {
+                !mj.coeffs.iter().all(|row| {
+                    // Either the row is a 0 vector, or only the first element of the row is filled
+                    row.iter().all(|elem| {
+                        F::from(0) == elem.0 // either the value is 0
+                        || elem.1 == 0 // or the row index is 0
+                    })
+                })
+            })
+            .cloned()
+            .collect();
+
+        if 0 >= mj_static.len() {
+            // When a monomial has no query into fixed columns, we add M matrices into the CCS instance.
+            // This is the simplest case.
+            S.last_mut()
+                .unwrap()
+                .extend(M.len()..(M.len() + mj_dynamic.len()));
+            M.extend(mj_dynamic);
+        } else {
+            // Consider the case where a monomial has multiple queries into fixed columns.
+            // custom gate: FixedColumn1 * FixedColumn2 * AdviceColumn1 = 0
+            // Then a naive implementation would generate 2 M matrices for fixed columns, and 1 for an advice column,
+            // We *batch* the M matrices for fixed columns, by multiplying it beforehand, and generate one single M matrix for multiple fixed columns.
+            // This way we can reduce the degree of the custom gate in the CCS instance.
+            let batched_vec: Vec<F> = mj_static
+                .into_iter()
+                .map(|mj| {
+                    // only the first column of a M matrix for a fixed column is filled.
+                    // So this way I can get the first column of mj as a vector
+                    mat_vec_mul(&mj, &vec![1.into(); mj.n_cols]).unwrap()
+                })
+                .reduce(|acc, new| hadamard(&acc, &new).unwrap())
+                .unwrap();
+            // By the condition of the if clause 0 < mj_static.len() so this reduce will never return None.
+
+            if 0 >= mj_dynamic.len() {
+                // When a monomial has no query into advice/instance columns, we'll add the batched M matrix to the CCS instance, and we're done.
+                let mut mj_static_batched: SparseMatrix<F> = SparseMatrix::empty();
+                mj_static_batched.n_cols = ccs.n;
+                mj_static_batched.n_rows = ccs.m;
+                mj_static_batched.coeffs = batched_vec.into_iter().map(|x| vec![(x, 0)]).collect();
+
+                S.last_mut().unwrap().push(M.len());
+                M.push(mj_static_batched);
+            } else {
+                // When a monomial has queries into both fixed/selector columns and advice/instance columns, we can further batch M matrices.
+                // By baking the fixed multiplication into one of the M matrices for advice/instance columns.
+                mj_dynamic.first_mut().unwrap().coeffs = mj_dynamic
+                    .first()
+                    .unwrap()
+                    .coeffs
+                    .iter()
+                    .zip(batched_vec.iter())
+                    .map(|(mj_row, multiply_row_by)| {
+                        mj_row
+                            .into_iter()
+                            .map(|(elem, pos)| (*elem * multiply_row_by, *pos))
+                            .collect()
+                    })
+                    .collect();
+
+                for mj in mj_dynamic.iter_mut().skip(1) {
+                    // Consider a custom gate F1 * A1 * A2 = 0
+                    // where F1 is a fixed column, A1 and A2 are advice columns.
+                    // In this case, baking the fixed multiplication into M matrices for both A1 and A2 will result in redundant double multiplications.
+                    // However, when a fixed cell takes a value 0, it's okay to bake the fixed 0 multiplication into M matrices for both A1 and A2, since 0 * A1 * A2 = 0 * A1 * 0 * A2.
+                    // So we do it here.
+                    // You might ask why we need to do this.
+                    // It will become important when we later implement detection of unused witnesses in Z.
+                    for (row_mj, multiply_row_by) in mj.coeffs.iter_mut().zip(batched_vec.iter()) {
+                        if *multiply_row_by == 0.into() {
+                            *row_mj = row_mj
+                                .into_iter()
+                                .map(|(_, pos)| (0.into(), *pos))
+                                .collect();
+                        }
+                    }
+                }
+
+                // Then we add M matrices for advice/instance columns into the CCS instance.
+                // We no longer need to add M matrices for fixed columns to the CCS instance because it's already baked into the M matrices for advice/instance columns.
+                S.last_mut()
+                    .unwrap()
+                    .extend(M.len()..(M.len() + mj_dynamic.len()));
+                M.extend(mj_dynamic);
+            }
+        }
+    }
+
+    return CCS {
+        t: M.len(),
+        d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(1),
+        M,
+        S,
+        ..ccs
+    };
 }
 
 fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
