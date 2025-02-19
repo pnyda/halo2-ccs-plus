@@ -47,13 +47,10 @@ fn test_fibonacci_fail_when_changing_z() -> Result<(), Error> {
 
     dbg!(z.len());
 
-    // You can change elements of z which have been set to 0 - unassigned cells in halo2
+    // You can NOT change elements of z which have been set to 0 - unassigned cells in halo2
     z[10] = 10.into();
-    assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
-
-    // But not all elements can be changed to arbitrary values
-    z[19] = 10.into();
     assert!(!is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
+
     Ok(())
 }
 
