@@ -482,34 +482,23 @@ fn reduce_degree<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
         let mj_for_monomial: Vec<&SparseMatrix<F>> =
             monomial.iter().map(|index| &ccs.M[*index]).collect();
         // M matrices generated from FixedQuery or Selector
-        let mj_static: Vec<&SparseMatrix<F>> = mj_for_monomial
-            .iter()
-            .copied()
-            .filter(|mj| {
-                mj.coeffs.iter().all(|row| {
-                    // Either the row is a 0 vector, or only the first element of the row is filled
-                    row.iter().all(|elem| {
-                        F::from(0) == elem.0 // either the value is 0
-                        || elem.1 == 0 // or the row index is 0
-                    })
-                })
-            })
-            .collect();
+        let mut mj_static: Vec<&SparseMatrix<F>> = Vec::new();
         // M matrices generated from AdviceQuery or InstanceQuery
-        let mut mj_dynamic: Vec<SparseMatrix<F>> = mj_for_monomial
-            .iter()
-            .copied()
-            .filter(|mj| {
-                !mj.coeffs.iter().all(|row| {
-                    // Either the row is a 0 vector, or only the first element of the row is filled
-                    row.iter().all(|elem| {
-                        F::from(0) == elem.0 // either the value is 0
+        let mut mj_dynamic: Vec<SparseMatrix<F>> = Vec::new();
+
+        for mj in mj_for_monomial {
+            if mj.coeffs.iter().all(|row| {
+                // Either the row is a 0 vector, or only the first element of the row is filled
+                row.iter().all(|elem| {
+                    F::from(0) == elem.0 // either the value is 0
                         || elem.1 == 0 // or the row index is 0
-                    })
                 })
-            })
-            .cloned()
-            .collect();
+            }) {
+                mj_static.push(mj);
+            } else {
+                mj_dynamic.push(mj.clone());
+            }
+        }
 
         if 0 >= mj_static.len() {
             // When a monomial has no query into fixed columns, we add M matrices into the CCS instance.
