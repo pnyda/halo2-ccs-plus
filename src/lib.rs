@@ -586,6 +586,17 @@ fn reduce_d<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
 // This function optimizes a CCS instance.
 // Reduces the number of M matrices in a CCS instance.
 fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
+    // There are 2 ways an element at (x,y) in a SparseMatrix can be 0
+    // 1. SparseMatrix.coeffs[y] contains (0, x)
+    // 2. SparseMatrix.coeffs[y] does not contain (0, x), but (non-0, x) doesn't exist either, so it's implied that the element at (x,y) is 0
+    // Thus the same SparseMatrix can take many forms on the memory.
+    // It's cumbersome to handle 2 cases so here we sanitize SparseMatrix, into the case 2.
+    for mj in ccs.M.iter_mut() {
+        for row in mj.coeffs.iter_mut() {
+            row.retain(|elem| elem.0 != 0.into());
+        }
+    }
+
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
 
@@ -616,16 +627,6 @@ fn reduce_n<F: ark_ff::PrimeField>(
     ccs: &mut CCS<F>,
     cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
 ) {
-    // There are 2 ways an element at (x,y) in a SparseMatrix can be 0
-    // 1. SparseMatrix.coeffs[y] contains (0, x)
-    // 2. SparseMatrix.coeffs[y] does not contain (0, x), but (non-0, x) doesn't exist either, so it's implied that the element at (x,y) is 0
-    // It's cumbersome to handle 2 cases so here we sanitize SparseMatrix, into the case 2.
-    for mj in ccs.M.iter_mut() {
-        for row in mj.coeffs.iter_mut() {
-            row.retain(|elem| elem.0 != 0.into());
-        }
-    }
-
     let mut used_z: HashSet<usize> = HashSet::new();
     used_z.insert(0);
 
