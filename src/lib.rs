@@ -462,18 +462,16 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
     cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
     lookup_inputs: &[Expression<HALO2>],
 ) -> CCS<F> {
-    let mut ccs = reduce_t(reduce_d(generate_naive_ccs_instance(
-        custom_gates,
-        cell_mapping,
-        lookup_inputs,
-    )));
+    let mut ccs = generate_naive_ccs_instance(custom_gates, cell_mapping, lookup_inputs);
+    reduce_d(&mut ccs);
+    reduce_t(&mut ccs);
     reduce_n(&mut ccs, cell_mapping);
     ccs
 }
 
 // This function optimizes a CCS instance.
 // Reduces the degree of a CCS instance.
-fn reduce_d<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
+fn reduce_d<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
 
@@ -579,18 +577,15 @@ fn reduce_d<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
         }
     }
 
-    return CCS {
-        t: M.len(),
-        d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(1),
-        M,
-        S,
-        ..ccs
-    };
+    ccs.t = M.len();
+    ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(1);
+    ccs.M = M;
+    ccs.S = S;
 }
 
 // This function optimizes a CCS instance.
 // Reduces the number of M matrices in a CCS instance.
-fn reduce_t<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
+fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
 
@@ -610,12 +605,9 @@ fn reduce_t<F: ark_ff::PrimeField>(ccs: CCS<F>) -> CCS<F> {
         }
     }
 
-    return CCS {
-        t: M.len(),
-        M,
-        S,
-        ..ccs
-    };
+    ccs.t = M.len();
+    ccs.M = M;
+    ccs.S = S;
 }
 
 // This function optimizes a CCS instance.
