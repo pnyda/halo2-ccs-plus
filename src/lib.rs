@@ -183,6 +183,7 @@ fn deduplicate_witness<F: ark_ff::PrimeField>(
     // cell_mapping[B] = cell_mapping[A]
     // cell_mapping[C] = cell_mapping[B]
     copy_constraints_sorted.sort();
+    dbg!(&copy_constraints_sorted);
 
     for (deduplicate_into, deduplicate_from) in copy_constraints_sorted.into_iter() {
         *cell_mapping.get_mut(&deduplicate_from).unwrap() =
@@ -302,6 +303,123 @@ fn test_duplicate_witness() {
             row_index: 3,
         },
         CCSValue::InsideZ(1),
+    );
+
+    assert_eq!(actual, expect);
+}
+
+#[cfg(test)]
+#[test]
+fn test_duplicate_witness_instance() {
+    use ark_pallas::Fq;
+
+    let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+    actual.insert(
+        // cell A
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(1),
+    );
+    actual.insert(
+        // cell B
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(2),
+    );
+    actual.insert(
+        // cell C
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideZ(3),
+    );
+    actual.insert(
+        // cell D
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Instance,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(4),
+    );
+
+    let copy_constraints = vec![
+        CopyConstraint {
+            // B = C
+            from_column_type: Any::Advice,
+            from_column_index: 0,
+            from_row_index: 2,
+            to_column_type: Any::Advice,
+            to_column_index: 0,
+            to_row_index: 1,
+        },
+        CopyConstraint {
+            // C = D
+            from_column_type: Any::Instance,
+            from_column_index: 0,
+            from_row_index: 0,
+            to_column_type: Any::Advice,
+            to_column_index: 0,
+            to_row_index: 2,
+        },
+        CopyConstraint {
+            // B = A
+            from_column_type: Any::Advice,
+            from_column_index: 0,
+            from_row_index: 0,
+            to_column_type: Any::Advice,
+            to_column_index: 0,
+            to_row_index: 1,
+        },
+    ];
+
+    deduplicate_witness(&mut actual, &copy_constraints);
+
+    // All get deduplicated into D
+    let mut expect = HashMap::new();
+    expect.insert(
+        // cell A
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(4),
+    );
+    expect.insert(
+        // cell B
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(4),
+    );
+    expect.insert(
+        // cell C
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideZ(4),
+    );
+    expect.insert(
+        // cell D
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Instance,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(4),
     );
 
     assert_eq!(actual, expect);
