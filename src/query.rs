@@ -1,15 +1,9 @@
 // Reference to a cell, relative to the current row
 use halo2_proofs::plonk::Any;
 use halo2_proofs::plonk::FixedQuery;
+use halo2_proofs::plonk::{AdviceQuery, InstanceQuery, Selector};
 use std::cmp::Ordering;
 use std::hash::Hash;
-use std::hash::Hasher;
-
-use halo2_proofs::plonk::AdviceQuery;
-
-use halo2_proofs::plonk::InstanceQuery;
-
-use halo2_proofs::plonk::Selector;
 
 // I use this Ord impl for witness deduplication.
 // Cells with greater ordering will get deduplicated into cells with less ordering.
@@ -117,47 +111,12 @@ impl Query {
     }
 }
 
-// I need to implement this because we'll later use Query as key of a HashMap.
-impl Hash for Query {
-    fn hash<H: Hasher>(&self, hasher: &mut H) {
-        // This implementation hashes information CCS+ cares about, and does not hash information CCS+ doesn't care about.
-        // I do this because I want QueryA == QueryB to hold every time when QueryA and QueryB is a same query from the CCS perspective, ignoring Halo2's menial internal data.
-        // For example query.index is just data Halo2 internally uses to keep track of queries.
-        // So this impl does not hash query.index
-
-        match self {
-            Self::Fixed(query) => {
-                hasher.write(&[0u8]); // enum variant ID
-                hasher.write(&query.rotation.0.to_le_bytes());
-                hasher.write(&query.column_index.to_le_bytes());
-            }
-            Self::Advice(query) => {
-                hasher.write(&[1u8]); // enum variant ID
-                hasher.write(&query.rotation.0.to_le_bytes());
-                hasher.write(&query.column_index.to_le_bytes());
-            }
-            Self::Instance(query) => {
-                hasher.write(&[2u8]); // enum variant ID
-                hasher.write(&query.rotation.0.to_le_bytes());
-                hasher.write(&query.column_index.to_le_bytes());
-            }
-            Self::Selector(query) => {
-                hasher.write(&[3u8]); // enum variant ID
-                hasher.write(&query.0.to_le_bytes());
-            }
-            Self::LookupInput(index) => {
-                hasher.write(&[4u8]);
-                hasher.write(&index.to_le_bytes());
-            }
-        }
-
-        hasher.finish();
-    }
-}
-
 impl PartialEq for Query {
     fn eq(&self, other: &Self) -> bool {
-        // For the same reason we ignore query.index
+        // This implementation only cares about the information CCS+ cares about.
+        // I want QueryA == QueryB to hold every time when QueryA and QueryB is essentially the same query, ignoring Halo2's menial internal data.
+        // For example query.index is just data Halo2 internally uses to keep track of queries.
+        // So this impl ignores query.index
 
         match (self, other) {
             (Self::Fixed(lhs), Self::Fixed(rhs)) => {
@@ -175,5 +134,3 @@ impl PartialEq for Query {
         }
     }
 }
-
-impl Eq for Query {}
