@@ -148,46 +148,67 @@ fn deduplicate_witness<F: ark_ff::PrimeField>(
     cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
     copy_constraints: &[CopyConstraint],
 ) {
-    let mut copy_constraints_sorted: Vec<(AbsoluteCellPosition, AbsoluteCellPosition)> =
-        copy_constraints
+    // Each element in HashSet<AbsoluteCellPosition> must have the same assignment.
+    let mut equalities: Vec<HashSet<AbsoluteCellPosition>> = Vec::new();
+
+    for copy_constraint in copy_constraints.into_iter() {
+        // These 2 cells must have the same assignment.
+        let cell1 = AbsoluteCellPosition {
+            column_type: copy_constraint.from_column_type.into(),
+            column_index: copy_constraint.from_column_index,
+            row_index: copy_constraint.from_row_index,
+        };
+        let cell2 = AbsoluteCellPosition {
+            column_type: copy_constraint.to_column_type.into(),
+            column_index: copy_constraint.to_column_index,
+            row_index: copy_constraint.to_row_index,
+        };
+
+        // The use of .iter().position() here must slow down the code, but I prioritize the readability of the code.
+        let cell1_belongs_in = equalities
             .iter()
-            .filter_map(|copy_constraint| {
-                let cell1 = AbsoluteCellPosition {
-                    column_type: copy_constraint.from_column_type.into(),
-                    column_index: copy_constraint.from_column_index,
-                    row_index: copy_constraint.from_row_index,
-                };
-                let cell2 = AbsoluteCellPosition {
-                    column_type: copy_constraint.to_column_type.into(),
-                    column_index: copy_constraint.to_column_index,
-                    row_index: copy_constraint.to_row_index,
-                };
+            .position(|must_be_same| must_be_same.contains(&cell1));
+        let cell2_belongs_in = equalities
+            .iter()
+            .position(|must_be_same| must_be_same.contains(&cell2));
 
-                // The second element of the tuple gets deduplicated into the first element of the tuple
-                match cell1.cmp(&cell2) {
-                    Ordering::Equal => None,
-                    Ordering::Less => Some((cell1, cell2)),
-                    Ordering::Greater => Some((cell2, cell1)),
-                }
-            })
-            .collect();
+        match (cell1_belongs_in, cell2_belongs_in) {
+            (None, None) => {
+                // When neither of the cells are in `equalities`, we add a new entry.
+                equalities.push(HashSet::new());
+                equalities.last_mut().unwrap().insert(cell1);
+                equalities.last_mut().unwrap().insert(cell2);
+            }
+            (Some(cell1_belongs_in), None) => {
+                // When we encounter a new copy constraint A = B when we already have B = C,
+                // `equalities` must be updated to be [A = B = C], not [A = B, B = C]
+                equalities[cell1_belongs_in].insert(cell2);
+            }
+            (None, Some(cell2_belongs_in)) => {
+                equalities[cell2_belongs_in].insert(cell1);
+            }
+            (Some(cell1_belongs_in), Some(cell2_belongs_in)) => {
+                // Let's say we have `equalities` [A = C, B = C].
+                // And then we encountered a new copy constraint A = B.
+                // Then the new `equalities` must be [A = B = C], not [A = C, B = C, A = B].
+                let to_be_merged = equalities.remove(cell2_belongs_in);
+                equalities[cell1_belongs_in].extend(to_be_merged);
+            }
+        }
+    }
 
-    // When there are copy constraints that states
-    // B = C
-    // B = A
-    // cell_mapping[C] should be z_index of A.
-    // We achieve this by sorting the copy constraints
-    // (A, B)
-    // (B, C)
-    // and applying witness deduplication for AbsoluteCellPosition with less ordering first
-    // cell_mapping[B] = cell_mapping[A]
-    // cell_mapping[C] = cell_mapping[B]
-    copy_constraints_sorted.sort();
-    dbg!(&copy_constraints_sorted);
+    for must_be_same in equalities.into_iter() {
+        let mut sorted: Vec<AbsoluteCellPosition> = must_be_same.into_iter().collect();
+        sorted.sort();
 
-    for (deduplicate_into, deduplicate_from) in copy_constraints_sorted.into_iter() {
-        *cell_mapping.get_mut(&deduplicate_from).unwrap() =
-            cell_mapping.get(&deduplicate_into).copied().unwrap();
+        // For each equality set, we deduplicate into the cell position with the least ordering.
+        let deduplicate_into = sorted.first().unwrap();
+        // It's okay to unwrap here because an element of `equalities` will never have length fewer than 2.
+
+        for deduplicate_from in sorted.iter().skip(1) {
+            *cell_mapping.get_mut(&deduplicate_from).unwrap() =
+                cell_mapping.get(&deduplicate_into).copied().unwrap();
+        }
     }
 }
 
