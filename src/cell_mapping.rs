@@ -117,269 +117,6 @@ pub(crate) fn generate_cell_mapping<
     cell_mapping
 }
 
-#[cfg(test)]
-#[test]
-fn test_generate_cell_mapping() {
-    use crate::VirtualColumnType;
-    use ark_pallas::Fq;
-    use halo2_proofs::pasta::Fp;
-    use halo2_proofs::plonk::AdviceQuery;
-    use halo2_proofs::plonk::Any;
-    use halo2_proofs::plonk::InstanceQuery;
-    use halo2_proofs::poly::Rotation;
-
-    // Meaningless assignments
-    let instance = [[Some(Fp::from(5)), None, None, None]];
-    let advice = [[
-        Some(Fp::from(1)),
-        Some(Fp::from(2)),
-        Some(Fp::from(3)),
-        Some(Fp::from(5)),
-    ]];
-    let fixed = [[Some(Fp::from(1)), Some(Fp::from(2)), None, None]];
-    let selectors = [[true, true, true, false]];
-    // Meaningless copy constraints
-    let copy_constraints = [
-        CopyConstraint {
-            from_column_type: Any::Fixed,
-            from_column_index: 0,
-            from_row_index: 0,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 0,
-        },
-        CopyConstraint {
-            from_column_type: Any::Fixed,
-            from_column_index: 0,
-            from_row_index: 1,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 1,
-        },
-    ];
-    // Meaningless lookups
-    let lookup_inputs: [Expression<Fp>; 2] = [
-        // We need to test 2 lookup inputs here because generate_cell_mapping behaves differently depending on if the lookup input is a simple query or a complex expression
-        Expression::Advice(AdviceQuery {
-            index: 0,
-            column_index: 0,
-            rotation: Rotation(0),
-        }),
-        Expression::Scaled(
-            Box::new(Expression::Instance(InstanceQuery {
-                index: 0,
-                column_index: 0,
-                rotation: Rotation(0),
-            })),
-            2.into(),
-        ),
-    ];
-
-    let mut expect: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Instance,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(1),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Instance,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideZ(2),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Instance,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(3),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Instance,
-            column_index: 0,
-            row_index: 3,
-        },
-        CCSValue::InsideZ(4),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideM(1.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideM(2.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(7),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 3,
-        },
-        CCSValue::InsideZ(8),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Fixed,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideM(1.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Fixed,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideM(2.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Fixed,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideM(0.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Fixed,
-            column_index: 0,
-            row_index: 3,
-        },
-        CCSValue::InsideM(0.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Selector,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideM(1.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Selector,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideM(1.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Selector,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideM(1.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Selector,
-            column_index: 0,
-            row_index: 3,
-        },
-        CCSValue::InsideM(0.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::LookupInput,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideM(1.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::LookupInput,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideM(2.into()),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::LookupInput,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(7),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::LookupInput,
-            column_index: 0,
-            row_index: 3,
-        },
-        CCSValue::InsideZ(8),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::LookupInput,
-            column_index: 1,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(9),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::LookupInput,
-            column_index: 1,
-            row_index: 1,
-        },
-        CCSValue::InsideZ(10),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::LookupInput,
-            column_index: 1,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(11),
-    );
-    expect.insert(
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::LookupInput,
-            column_index: 1,
-            row_index: 3,
-        },
-        CCSValue::InsideZ(12),
-    );
-
-    let actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = generate_cell_mapping(
-        &instance.each_ref().map(|x| &x[..]), // It feels weird that we have to do this manually
-        &advice.each_ref().map(|x| &x[..]),
-        &fixed.each_ref().map(|x| &x[..]),
-        &selectors.each_ref().map(|x| &x[..]),
-        &copy_constraints,
-        &lookup_inputs,
-    );
-    assert_eq!(actual, expect);
-}
-
 // Cells with greater ordering will get deduplicated into cells with less ordering.
 fn deduplicate_witness<F: ark_ff::PrimeField>(
     cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
@@ -450,355 +187,613 @@ fn deduplicate_witness<F: ark_ff::PrimeField>(
 }
 
 #[cfg(test)]
-#[test]
-fn test_duplicate_witness() {
+mod tests {
+    use super::*;
+    use crate::CCSValue;
     use ark_pallas::Fq;
+    use halo2_proofs::pasta::Fp;
+    use halo2_proofs::plonk::AdviceQuery;
     use halo2_proofs::plonk::Any;
+    use halo2_proofs::plonk::InstanceQuery;
+    use halo2_proofs::poly::Rotation;
 
-    let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
-    actual.insert(
-        // cell A
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(1),
-    );
-    actual.insert(
-        // cell B
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideZ(2),
-    );
-    actual.insert(
-        // cell C
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(3),
-    );
-    actual.insert(
-        // cell D
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 3,
-        },
-        CCSValue::InsideZ(4),
-    );
+    #[cfg(test)]
+    #[test]
+    fn test_duplicate_witness() {
+        let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+        actual.insert(
+            // cell A
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
+        actual.insert(
+            // cell B
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(2),
+        );
+        actual.insert(
+            // cell C
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideZ(3),
+        );
+        actual.insert(
+            // cell D
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 3,
+            },
+            CCSValue::InsideZ(4),
+        );
 
-    let copy_constraints = vec![
-        CopyConstraint {
-            // B = C
-            from_column_type: Any::Advice,
-            from_column_index: 0,
-            from_row_index: 2,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 1,
-        },
-        CopyConstraint {
-            // C = D
-            from_column_type: Any::Advice,
-            from_column_index: 0,
-            from_row_index: 3,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 2,
-        },
-        CopyConstraint {
-            // B = A
-            from_column_type: Any::Advice,
-            from_column_index: 0,
-            from_row_index: 0,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 1,
-        },
-    ];
+        let copy_constraints = vec![
+            CopyConstraint {
+                // B = C
+                from_column_type: Any::Advice,
+                from_column_index: 0,
+                from_row_index: 2,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 1,
+            },
+            CopyConstraint {
+                // C = D
+                from_column_type: Any::Advice,
+                from_column_index: 0,
+                from_row_index: 3,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 2,
+            },
+            CopyConstraint {
+                // B = A
+                from_column_type: Any::Advice,
+                from_column_index: 0,
+                from_row_index: 0,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 1,
+            },
+        ];
 
-    deduplicate_witness(&mut actual, &copy_constraints);
+        deduplicate_witness(&mut actual, &copy_constraints);
 
-    // All get deduplicated into A
-    let mut expect = HashMap::new();
-    expect.insert(
-        // cell A
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(1),
-    );
-    expect.insert(
-        // cell B
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideZ(1),
-    );
-    expect.insert(
-        // cell C
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(1),
-    );
-    expect.insert(
-        // cell D
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 3,
-        },
-        CCSValue::InsideZ(1),
-    );
+        // All get deduplicated into A
+        let mut expect = HashMap::new();
+        expect.insert(
+            // cell A
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
+        expect.insert(
+            // cell B
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(1),
+        );
+        expect.insert(
+            // cell C
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideZ(1),
+        );
+        expect.insert(
+            // cell D
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 3,
+            },
+            CCSValue::InsideZ(1),
+        );
 
-    assert_eq!(actual, expect);
-}
+        assert_eq!(actual, expect);
+    }
 
-#[cfg(test)]
-#[test]
-fn test_duplicate_witness_instance() {
-    use ark_pallas::Fq;
-    use halo2_proofs::plonk::Any;
+    #[cfg(test)]
+    #[test]
+    fn test_duplicate_witness_instance() {
+        let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+        actual.insert(
+            // cell A
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(2),
+        );
+        actual.insert(
+            // cell B
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(3),
+        );
+        actual.insert(
+            // cell C
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideZ(4),
+        );
+        actual.insert(
+            // cell D
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
 
-    let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
-    actual.insert(
-        // cell A
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(2),
-    );
-    actual.insert(
-        // cell B
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideZ(3),
-    );
-    actual.insert(
-        // cell C
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(4),
-    );
-    actual.insert(
-        // cell D
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Instance,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(1),
-    );
+        let copy_constraints = vec![
+            CopyConstraint {
+                // B = C
+                from_column_type: Any::Advice,
+                from_column_index: 0,
+                from_row_index: 2,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 1,
+            },
+            CopyConstraint {
+                // C = D
+                from_column_type: Any::Instance,
+                from_column_index: 0,
+                from_row_index: 0,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 2,
+            },
+            CopyConstraint {
+                // B = A
+                from_column_type: Any::Advice,
+                from_column_index: 0,
+                from_row_index: 0,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 1,
+            },
+        ];
 
-    let copy_constraints = vec![
-        CopyConstraint {
-            // B = C
-            from_column_type: Any::Advice,
-            from_column_index: 0,
-            from_row_index: 2,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 1,
-        },
-        CopyConstraint {
-            // C = D
-            from_column_type: Any::Instance,
-            from_column_index: 0,
-            from_row_index: 0,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 2,
-        },
-        CopyConstraint {
-            // B = A
-            from_column_type: Any::Advice,
-            from_column_index: 0,
-            from_row_index: 0,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 1,
-        },
-    ];
+        deduplicate_witness(&mut actual, &copy_constraints);
 
-    deduplicate_witness(&mut actual, &copy_constraints);
+        // All get deduplicated into D
+        let mut expect = HashMap::new();
+        expect.insert(
+            // cell A
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
+        expect.insert(
+            // cell B
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(1),
+        );
+        expect.insert(
+            // cell C
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideZ(1),
+        );
+        expect.insert(
+            // cell D
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
 
-    // All get deduplicated into D
-    let mut expect = HashMap::new();
-    expect.insert(
-        // cell A
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(1),
-    );
-    expect.insert(
-        // cell B
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideZ(1),
-    );
-    expect.insert(
-        // cell C
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(1),
-    );
-    expect.insert(
-        // cell D
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Instance,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(1),
-    );
+        assert_eq!(actual, expect);
+    }
 
-    assert_eq!(actual, expect);
-}
+    #[cfg(test)]
+    #[test]
+    fn test_duplicate_witness_fixed() {
+        let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+        actual.insert(
+            // cell A
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
+        actual.insert(
+            // cell B
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideM(123456789.into()),
+        );
+        actual.insert(
+            // cell C
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(2),
+        );
+        actual.insert(
+            // cell D
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideZ(3),
+        );
 
-#[cfg(test)]
-#[test]
-fn test_duplicate_witness_fixed() {
-    use ark_pallas::Fq;
-    use halo2_proofs::plonk::Any;
+        let copy_constraints = vec![
+            CopyConstraint {
+                // A = B
+                from_column_type: Any::Advice,
+                from_column_index: 0,
+                from_row_index: 0,
+                to_column_type: Any::Fixed,
+                to_column_index: 0,
+                to_row_index: 0,
+            },
+            CopyConstraint {
+                // C = D
+                from_column_type: Any::Advice,
+                from_column_index: 0,
+                from_row_index: 1,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 2,
+            },
+            CopyConstraint {
+                // D = A
+                from_column_type: Any::Advice,
+                from_column_index: 0,
+                from_row_index: 0,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 2,
+            },
+        ];
 
-    let mut actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
-    actual.insert(
-        // cell A
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideZ(1),
-    );
-    actual.insert(
-        // cell B
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Fixed,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideM(123456789.into()),
-    );
-    actual.insert(
-        // cell C
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideZ(2),
-    );
-    actual.insert(
-        // cell D
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideZ(3),
-    );
+        deduplicate_witness(&mut actual, &copy_constraints);
 
-    let copy_constraints = vec![
-        CopyConstraint {
-            // A = B
-            from_column_type: Any::Advice,
-            from_column_index: 0,
-            from_row_index: 0,
-            to_column_type: Any::Fixed,
-            to_column_index: 0,
-            to_row_index: 0,
-        },
-        CopyConstraint {
-            // C = D
-            from_column_type: Any::Advice,
-            from_column_index: 0,
-            from_row_index: 1,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 2,
-        },
-        CopyConstraint {
-            // D = A
-            from_column_type: Any::Advice,
-            from_column_index: 0,
-            from_row_index: 0,
-            to_column_type: Any::Advice,
-            to_column_index: 0,
-            to_row_index: 2,
-        },
-    ];
+        // All get deduplicated into B
+        let mut expect = HashMap::new();
+        expect.insert(
+            // cell A
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideM(123456789.into()),
+        );
+        expect.insert(
+            // cell B
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideM(123456789.into()),
+        );
+        expect.insert(
+            // cell C
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideM(123456789.into()),
+        );
+        expect.insert(
+            // cell D
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideM(123456789.into()),
+        );
 
-    deduplicate_witness(&mut actual, &copy_constraints);
+        assert_eq!(actual, expect);
+    }
 
-    // All get deduplicated into B
-    let mut expect = HashMap::new();
-    expect.insert(
-        // cell A
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideM(123456789.into()),
-    );
-    expect.insert(
-        // cell B
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 1,
-        },
-        CCSValue::InsideM(123456789.into()),
-    );
-    expect.insert(
-        // cell C
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Advice,
-            column_index: 0,
-            row_index: 2,
-        },
-        CCSValue::InsideM(123456789.into()),
-    );
-    expect.insert(
-        // cell D
-        AbsoluteCellPosition {
-            column_type: VirtualColumnType::Fixed,
-            column_index: 0,
-            row_index: 0,
-        },
-        CCSValue::InsideM(123456789.into()),
-    );
+    #[cfg(test)]
+    #[test]
+    fn test_generate_cell_mapping() {
+        // Meaningless assignments
+        let instance = [[Some(Fp::from(5)), None, None, None]];
+        let advice = [[
+            Some(Fp::from(1)),
+            Some(Fp::from(2)),
+            Some(Fp::from(3)),
+            Some(Fp::from(5)),
+        ]];
+        let fixed = [[Some(Fp::from(1)), Some(Fp::from(2)), None, None]];
+        let selectors = [[true, true, true, false]];
+        // Meaningless copy constraints
+        let copy_constraints = [
+            CopyConstraint {
+                from_column_type: Any::Fixed,
+                from_column_index: 0,
+                from_row_index: 0,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 0,
+            },
+            CopyConstraint {
+                from_column_type: Any::Fixed,
+                from_column_index: 0,
+                from_row_index: 1,
+                to_column_type: Any::Advice,
+                to_column_index: 0,
+                to_row_index: 1,
+            },
+        ];
+        // Meaningless lookups
+        let lookup_inputs: [Expression<Fp>; 2] = [
+            // We need to test 2 lookup inputs here because generate_cell_mapping behaves differently depending on if the lookup input is a simple query or a complex expression
+            Expression::Advice(AdviceQuery {
+                index: 0,
+                column_index: 0,
+                rotation: Rotation(0),
+            }),
+            Expression::Scaled(
+                Box::new(Expression::Instance(InstanceQuery {
+                    index: 0,
+                    column_index: 0,
+                    rotation: Rotation(0),
+                })),
+                2.into(),
+            ),
+        ];
 
-    assert_eq!(actual, expect);
+        let mut expect: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(2),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideZ(3),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 3,
+            },
+            CCSValue::InsideZ(4),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideM(1.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideM(2.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideZ(7),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 3,
+            },
+            CCSValue::InsideZ(8),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideM(1.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideM(2.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideM(0.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: 0,
+                row_index: 3,
+            },
+            CCSValue::InsideM(0.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Selector,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideM(1.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Selector,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideM(1.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Selector,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideM(1.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Selector,
+                column_index: 0,
+                row_index: 3,
+            },
+            CCSValue::InsideM(0.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideM(1.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideM(2.into()),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 0,
+                row_index: 2,
+            },
+            CCSValue::InsideZ(7),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 0,
+                row_index: 3,
+            },
+            CCSValue::InsideZ(8),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 1,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(9),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 1,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(10),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 1,
+                row_index: 2,
+            },
+            CCSValue::InsideZ(11),
+        );
+        expect.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 1,
+                row_index: 3,
+            },
+            CCSValue::InsideZ(12),
+        );
+
+        let actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = generate_cell_mapping(
+            &instance.each_ref().map(|x| &x[..]), // It feels weird that we have to do this manually
+            &advice.each_ref().map(|x| &x[..]),
+            &fixed.each_ref().map(|x| &x[..]),
+            &selectors.each_ref().map(|x| &x[..]),
+            &copy_constraints,
+            &lookup_inputs,
+        );
+        assert_eq!(actual, expect);
+    }
 }
