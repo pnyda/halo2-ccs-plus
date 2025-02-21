@@ -69,6 +69,23 @@ fn test_fibonacci_fail() -> Result<(), Error> {
     Ok(())
 }
 
+#[test]
+fn test_fibonacci_no_unconstrained_z() -> Result<(), Error> {
+    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+    let k = 4;
+    let circuit = FibonacciCircuit(PhantomData);
+    let (ccs, z, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
+
+    for i in 1..z.len() {
+        let mut z = z.clone();
+        z[i] = 123456789.into();
+        assert!(!is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
+    }
+
+    Ok(())
+}
+
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
 #[derive(Debug, Clone)]
