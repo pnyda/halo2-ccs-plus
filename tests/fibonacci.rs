@@ -15,6 +15,7 @@ use halo2_proofs::plonk::Instance;
 use halo2_proofs::plonk::Selector;
 use halo2_proofs::poly::Rotation;
 use halo2ccs::convert_halo2_circuit;
+use rayon::prelude::*;
 use std::marker::PhantomData;
 
 // Tests against a simple circuit that has only one custom gate + copy constraints + no lookup
@@ -77,11 +78,12 @@ fn test_fibonacci_no_unconstrained_z() -> Result<(), Error> {
     let circuit = FibonacciCircuit(PhantomData);
     let (ccs, z, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
 
-    for i in 1..z.len() {
+    let no_unconstrained_z = (1..z.len()).into_par_iter().all(|i| {
         let mut z = z.clone();
         z[i] = 123456789.into();
-        assert!(!is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
-    }
+        !is_zero_vec(&ccs.eval_at_z(&z).unwrap())
+    });
+    assert!(no_unconstrained_z);
 
     Ok(())
 }

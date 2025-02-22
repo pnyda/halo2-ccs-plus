@@ -610,6 +610,7 @@ dependencies = [
  "folding-schemes",
  "halo2_gadgets",
  "halo2_proofs",
+ "rayon",
 ]
 
 [[package]]

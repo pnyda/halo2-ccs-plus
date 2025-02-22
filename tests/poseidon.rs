@@ -16,6 +16,7 @@ use halo2_proofs::plonk::ConstraintSystem;
 use halo2_proofs::plonk::Error;
 use halo2_proofs::plonk::Instance;
 use halo2ccs::convert_halo2_circuit;
+use rayon::prelude::*;
 use std::marker::PhantomData;
 
 // Tests against a complex circuit that has multiple custom gates + copy constraints + no lookup
@@ -66,7 +67,7 @@ fn test_poseidon_fail() -> Result<(), Error> {
 }
 
 #[test]
-#[ignore] // It takes too much time to run. I wonder why.
+// It takes too much time to run. I wonder why. This circuit is not that big...
 fn test_poseidon_no_unconstrained_z() -> Result<(), Error> {
     let message = [Fp::random(OsRng), Fp::random(OsRng)];
     let output = halo2_gadgets::poseidon::primitives::Hash::<
@@ -85,11 +86,12 @@ fn test_poseidon_no_unconstrained_z() -> Result<(), Error> {
     };
     let (ccs, z, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
 
-    for i in 1..z.len() {
+    let no_unconstrained_z = (1..z.len()).into_par_iter().all(|i| {
         let mut z = z.clone();
         z[i] = 123456789.into();
-        assert!(!is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
-    }
+        !is_zero_vec(&ccs.eval_at_z(&z).unwrap())
+    });
+    assert!(no_unconstrained_z);
 
     Ok(())
 }
