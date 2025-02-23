@@ -474,6 +474,9 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
         if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).copied().unwrap() {
             if let Some(cell_value) = cell_value {
                 z[z_index] = ARKWORKS::from_le_bytes_mod_order(&cell_value.to_repr());
+            } else {
+                // Check test_generate_z_corner_case to see why this is needed.
+                z[z_index] = 0.into();
             }
         }
     }
@@ -1045,7 +1048,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_z() {
+    fn test_generate_z_corner_case() {
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
             // cell A
