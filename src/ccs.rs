@@ -429,7 +429,7 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
     cells.reverse();
     // We need to sort and reverse here because
     // when an element in Z represents more than 2 cells in the original Plonkish table due to copy constraints
-    // the value in AbsoluteCellPosition with less ordering should take precedence
+    // the value at AbsoluteCellPosition with less ordering should take precedence
 
     for cell_position in cells.iter() {
         let cell_value = match cell_position.column_type {
@@ -470,6 +470,7 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
             ),
             _ => continue,
         };
+
         if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).copied().unwrap() {
             if let Some(cell_value) = cell_value {
                 z[z_index] = ARKWORKS::from_le_bytes_mod_order(&cell_value.to_repr());
@@ -485,7 +486,7 @@ mod tests {
     use super::*;
     use ark_pallas::Fq;
     use folding_schemes::utils::vec::dense_matrix_to_sparse;
-    use halo2_proofs::poly::Rotation;
+    use halo2_proofs::{pasta::Fp, poly::Rotation};
 
     #[test]
     fn test_generate_mj_advice() {
@@ -1041,5 +1042,51 @@ mod tests {
         };
 
         assert_eq!(actual, expect);
+    }
+
+    #[test]
+    fn test_generate_z() {
+        let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+        cell_mapping.insert(
+            // cell A
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
+        cell_mapping.insert(
+            // cell B
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(1),
+        );
+        // There is a copy constraint between cell A and cell B.
+
+        // AbsoluteCellPosition A < AbsoluteCellPosition B
+        // so the value assigned at the cell A should decide the value assigned at Z[1].
+
+        // but the cell A in the original table is unassigned.
+        let advice: [[Option<Fp>; 2]; 1] = [[None, Some(2.into())]];
+        let selectors = Vec::new();
+        let fixed = Vec::new();
+        let instance = Vec::new();
+
+        let z = generate_z(
+            &selectors,
+            &fixed,
+            &instance,
+            &advice.each_ref().map(|x| &x[..]),
+            &cell_mapping,
+            &[],
+        );
+
+        // Halo 2 initializes Cell A with 0, so I think we should follow that behavior.
+        // Maybe it doesn't matter
+        assert_eq!(z, vec![1.into(), 0.into()]);
     }
 }
