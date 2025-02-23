@@ -182,7 +182,7 @@ pub(crate) fn generate_ccs_instance<
 
 // This function optimizes a CCS instance.
 // Reduces the degree of a CCS instance.
-// Excepts a CCS instance where no M matrix is reused. In other words the same integer does not appear twice in S.
+// Excepts a CCS instance where no M matrix is reused. In other words a same integer does not appear twice in S.
 pub(crate) fn reduce_d<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
@@ -271,10 +271,7 @@ pub(crate) fn reduce_d<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
                     // It will become important when we later implement detection of unused witnesses in Z.
                     for (row_mj, multiply_row_by) in mj.coeffs.iter_mut().zip(batched_vec.iter()) {
                         if *multiply_row_by == 0.into() {
-                            *row_mj = row_mj
-                                .into_iter()
-                                .map(|(_, pos)| (0.into(), *pos))
-                                .collect();
+                            row_mj.clear();
                         }
                     }
                 }
