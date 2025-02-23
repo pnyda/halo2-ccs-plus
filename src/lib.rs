@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
+use ark_pallas::Fq;
 use ark_std::log2;
 use folding_schemes::arith::ccs::CCS;
+use folding_schemes::utils::vec::dense_matrix_to_sparse;
 use folding_schemes::utils::vec::hadamard;
 use folding_schemes::utils::vec::mat_vec_mul;
 use folding_schemes::utils::vec::SparseMatrix;
@@ -10,6 +12,7 @@ use halo2_proofs::dump::dump_lookups;
 use halo2_proofs::dump::AssignmentDumper;
 use halo2_proofs::plonk;
 use halo2_proofs::plonk::*;
+use halo2_proofs::poly::Rotation;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -35,6 +38,9 @@ mod lookup;
 // Thus in this code I treat a lookup input evaluated at each row as if it's another column.
 // I later constrain these lookup input evaluation result columns according to the lookup input Expression, just like we constrain advice columns according to custom gate Expression.
 
+// This function generates a M_j matrix for a Query.
+// Note that the output of this function does not go into a CCS instance directly,
+//   rather it goes through a bunch of transformation in the process.
 fn generate_mj<F: ark_ff::PrimeField>(
     query: Query,
     table_height: usize,
@@ -44,7 +50,7 @@ fn generate_mj<F: ark_ff::PrimeField>(
     let mut mj = SparseMatrix::empty();
     mj.n_cols = z_height;
     mj.n_rows = table_height;
-    // might increase later when there was multiple custom gates.
+    // n_rows will be increased later in the process if there were multiple custom gates.
 
     for y in 0..table_height {
         let cell_position = query.cell_position(y, table_height);
@@ -67,6 +73,218 @@ fn generate_mj<F: ark_ff::PrimeField>(
     }
 
     mj
+}
+
+#[test]
+fn test_generate_mj_advice() {
+    let query = Query::Advice(AdviceQuery {
+        index: 0,
+        column_index: 0,
+        rotation: Rotation(0),
+    });
+    let table_height = 4;
+    let z_height = 5;
+    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(1),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(2),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideZ(3),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 3,
+        },
+        CCSValue::InsideZ(4),
+    );
+
+    let actual = generate_mj(query, table_height, z_height, &cell_mapping);
+    let expect: SparseMatrix<Fq> = dense_matrix_to_sparse(vec![
+        vec![0.into(), 1.into(), 0.into(), 0.into(), 0.into()],
+        vec![0.into(), 0.into(), 1.into(), 0.into(), 0.into()],
+        vec![0.into(), 0.into(), 0.into(), 1.into(), 0.into()],
+        vec![0.into(), 0.into(), 0.into(), 0.into(), 1.into()],
+    ]);
+    assert_eq!(actual, expect);
+}
+
+#[test]
+fn test_generate_mj_advice_rotation() {
+    let query = Query::Advice(AdviceQuery {
+        index: 0,
+        column_index: 0,
+        rotation: Rotation(1),
+    });
+    let table_height = 4;
+    let z_height = 5;
+    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(1),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(2),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideZ(3),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 3,
+        },
+        CCSValue::InsideZ(4),
+    );
+
+    let actual = generate_mj(query, table_height, z_height, &cell_mapping);
+    let expect: SparseMatrix<Fq> = dense_matrix_to_sparse(vec![
+        vec![0.into(), 0.into(), 1.into(), 0.into(), 0.into()],
+        vec![0.into(), 0.into(), 0.into(), 1.into(), 0.into()],
+        vec![0.into(), 0.into(), 0.into(), 0.into(), 1.into()],
+        vec![0.into(), 1.into(), 0.into(), 0.into(), 0.into()],
+    ]);
+    assert_eq!(actual, expect);
+}
+
+#[test]
+fn test_generate_mj_fixed() {
+    let query = Query::Fixed(FixedQuery {
+        index: 0,
+        column_index: 0,
+        rotation: Rotation(0),
+    });
+    let table_height = 4;
+    let z_height = 5;
+    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideM(12.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideM(34.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideM(56.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 3,
+        },
+        CCSValue::InsideM(78.into()),
+    );
+
+    let actual = generate_mj(query, table_height, z_height, &cell_mapping);
+    let expect: SparseMatrix<Fq> = dense_matrix_to_sparse(vec![
+        vec![12.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+        vec![34.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+        vec![56.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+        vec![78.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+    ]);
+    assert_eq!(actual, expect);
+}
+
+#[test]
+fn test_generate_mj_fixed_rotation() {
+    let query = Query::Fixed(FixedQuery {
+        index: 0,
+        column_index: 0,
+        rotation: Rotation(-1),
+    });
+    let table_height = 4;
+    let z_height = 5;
+    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideM(12.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideM(34.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 2,
+        },
+        CCSValue::InsideM(56.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 3,
+        },
+        CCSValue::InsideM(78.into()),
+    );
+
+    let actual = generate_mj(query, table_height, z_height, &cell_mapping);
+    let expect: SparseMatrix<Fq> = dense_matrix_to_sparse(vec![
+        vec![78.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+        vec![12.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+        vec![34.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+        vec![56.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+    ]);
+    assert_eq!(actual, expect);
 }
 
 // Generate a CCS instance that works, but unoptimized.
@@ -166,6 +384,7 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
 
                 S.last_mut().unwrap().push(M.len());
                 M.push(mj);
+                // M matrix exists for each (gate, query) combination.
             }
         }
     }
@@ -199,6 +418,7 @@ fn generate_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::Prim
 
 // This function optimizes a CCS instance.
 // Reduces the degree of a CCS instance.
+// Excepts a CCS instance where no M matrix is reused. In other words the same integer does not appear twice in S.
 fn reduce_d<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
@@ -311,6 +531,184 @@ fn reduce_d<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     ccs.S = S;
 }
 
+#[test]
+fn test_reduce_d_mixed() {
+    // A circuit with k=1
+    // Has one selector column, one fixed column, one instance column, one advice column.
+    let subject: CCS<Fq> = CCS {
+        m: 2,
+        n: 5,
+        l: 2,
+        t: 4,
+        q: 1,
+        d: 4,
+        s: 2,
+        s_prime: 3,
+        // Let's say M_0 is generated from Selector query, M_1 is from FixedQuery, M_2 is from InstanceQuery, M_3 is from AdviceQuery
+        S: vec![vec![0, 1, 2, 3]],
+        c: vec![1.into()],
+        M: vec![
+            // The selector is turned off at the second row
+            dense_matrix_to_sparse(vec![
+                vec![1.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            ]),
+            // The assignments on the fixed column was [2, 3]
+            dense_matrix_to_sparse(vec![
+                vec![2.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+                vec![3.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            ]),
+            // Queries the instance column. The second row of the instance column was queried only when the selector is turned off. This means that we should not pack the second row of the instance column into Z.
+            dense_matrix_to_sparse(vec![
+                vec![0.into(), 1.into(), 0.into(), 0.into(), 0.into()],
+                vec![0.into(), 0.into(), 1.into(), 0.into(), 0.into()],
+            ]),
+            // Queries the advice column. The first row of the advice column was queried when the selector is turned off, but it was also queried when the selector was turned on. This means that we should not remove that cell from Z.
+            // The second row of the advice column is literally unconstrained.
+            dense_matrix_to_sparse(vec![
+                vec![0.into(), 0.into(), 0.into(), 1.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into(), 1.into(), 0.into()],
+            ]),
+        ],
+    };
+
+    let mut actual = subject.clone();
+    reduce_d(&mut actual);
+
+    let mut expect = CCS {
+        S: vec![vec![0, 1]],
+        M: vec![
+            // M_0, M_1, M_2, batched
+            dense_matrix_to_sparse(vec![
+                vec![0.into(), 2.into(), 0.into(), 0.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            ]),
+            // M_3, modified
+            dense_matrix_to_sparse(vec![
+                vec![0.into(), 0.into(), 0.into(), 1.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            ]),
+        ],
+        t: 2,
+        d: 2,
+        ..subject
+    };
+
+    // Even when 2 SparseMatrix represents the same matrix, SparseMatrix.equal() returns false when the internal representation of the matrix differs...? We need to sanitize SparseMatrix before calling assert_eq
+    for mj in actual.M.iter_mut() {
+        *mj = dense_matrix_to_sparse(mj.to_dense());
+    }
+
+    for mj in expect.M.iter_mut() {
+        *mj = dense_matrix_to_sparse(mj.to_dense());
+    }
+
+    assert_eq!(actual, expect);
+}
+
+#[test]
+fn test_reduce_d_static() {
+    let subject: CCS<Fq> = CCS {
+        m: 2,
+        n: 5,
+        l: 2,
+        t: 2,
+        q: 1,
+        d: 2,
+        s: 2,
+        s_prime: 3,
+        // Let's say M_0 is generated from Selector query, M_1 is from FixedQuery
+        S: vec![vec![0, 1]],
+        c: vec![1.into()],
+        M: vec![
+            // The selector is turned off at the second row
+            dense_matrix_to_sparse(vec![
+                vec![1.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            ]),
+            // The assignments on the fixed column was [2, 3]
+            dense_matrix_to_sparse(vec![
+                vec![2.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+                vec![3.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            ]),
+        ],
+    };
+
+    let mut actual = subject.clone();
+    reduce_d(&mut actual);
+
+    let mut expect = CCS {
+        S: vec![vec![0]],
+        M: vec![
+            // M_0, M_1, batched
+            dense_matrix_to_sparse(vec![
+                vec![2.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            ]),
+        ],
+        t: 1,
+        d: 1,
+        ..subject
+    };
+
+    // Even when 2 SparseMatrix represents the same matrix, SparseMatrix.equal() returns false when the internal representation of the matrix differs...? We need to sanitize SparseMatrix before calling assert_eq
+    for mj in actual.M.iter_mut() {
+        *mj = dense_matrix_to_sparse(mj.to_dense());
+    }
+
+    for mj in expect.M.iter_mut() {
+        *mj = dense_matrix_to_sparse(mj.to_dense());
+    }
+
+    assert_eq!(actual, expect);
+}
+
+#[test]
+fn test_reduce_d_dynamic() {
+    let subject: CCS<Fq> = CCS {
+        m: 2,
+        n: 5,
+        l: 2,
+        t: 2,
+        q: 1,
+        d: 2,
+        s: 2,
+        s_prime: 3,
+        // Let's say M_0 is from InstanceQuery, M_1 is from AdviceQuery
+        S: vec![vec![0, 1]],
+        c: vec![1.into()],
+        M: vec![
+            // Queries the instance column.
+            dense_matrix_to_sparse(vec![
+                vec![0.into(), 1.into(), 0.into(), 0.into(), 0.into()],
+                vec![0.into(), 0.into(), 1.into(), 0.into(), 0.into()],
+            ]),
+            // Queries the advice column.
+            dense_matrix_to_sparse(vec![
+                vec![0.into(), 0.into(), 0.into(), 1.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into(), 1.into(), 0.into()],
+            ]),
+        ],
+    };
+
+    let mut actual = subject.clone();
+    reduce_d(&mut actual);
+
+    // No change on the CCS instance
+    let mut expect = subject.clone();
+
+    // Even when 2 SparseMatrix represents the same matrix, SparseMatrix.equal() returns false when the internal representation of the matrix differs...? We need to sanitize SparseMatrix before calling assert_eq
+    for mj in actual.M.iter_mut() {
+        *mj = dense_matrix_to_sparse(mj.to_dense());
+    }
+
+    for mj in expect.M.iter_mut() {
+        *mj = dense_matrix_to_sparse(mj.to_dense());
+    }
+
+    assert_eq!(actual, expect);
+}
+
 // This function optimizes a CCS instance.
 // Reduces the number of M matrices in a CCS instance.
 fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
@@ -347,6 +745,52 @@ fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     ccs.t = M.len();
     ccs.M = M;
     ccs.S = S;
+}
+
+#[test]
+fn test_reduce_t() {
+    let m0 = dense_matrix_to_sparse(vec![
+        vec![1.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+        vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+    ]);
+
+    let mut m1 = SparseMatrix::empty();
+    m1.n_cols = 5;
+    m1.n_rows = 2;
+    m1.coeffs.push(vec![(1.into(), 0)]);
+    m1.coeffs.push(vec![(0.into(), 0)]);
+
+    let mut m2 = SparseMatrix::empty();
+    m2.n_cols = 5;
+    m2.n_rows = 2;
+    m2.coeffs.push(vec![(1.into(), 0)]);
+    m2.coeffs.push(vec![]);
+
+    let subject: CCS<Fq> = CCS {
+        m: 2,
+        n: 5,
+        l: 2,
+        t: 3,
+        q: 1,
+        d: 3,
+        s: 2,
+        s_prime: 3,
+        c: vec![1.into()],
+        S: vec![vec![0, 1, 2]],
+        M: vec![m0.clone(), m1.clone(), m2.clone()],
+    };
+
+    let mut actual = subject.clone();
+    reduce_t(&mut actual);
+
+    let expect = CCS {
+        S: vec![vec![0, 0, 0]],
+        M: vec![m0.clone()],
+        t: 1,
+        ..subject
+    };
+
+    assert_eq!(actual, expect);
 }
 
 // This function optimizes a CCS instance.
@@ -414,6 +858,126 @@ fn reduce_n<F: ark_ff::PrimeField>(
         .into_iter()
         .filter(|cell| cell.column_type == VirtualColumnType::Instance)
         .count();
+}
+
+#[test]
+fn test_reduce_n() {
+    let ccs: CCS<Fq> = CCS {
+        m: 2,
+        n: 5,
+        l: 2,
+        t: 2,
+        q: 1,
+        d: 2,
+        s: 2,
+        s_prime: 3,
+        c: vec![1.into()],
+        S: vec![vec![0, 1]],
+        M: vec![
+            // M_0, M_1, M_2, batched
+            dense_matrix_to_sparse(vec![
+                // z = (1, x, w)
+                //   1         x[0]      x[1]      w[0]      w[1]
+                vec![0.into(), 2.into(), 0.into(), 0.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            ]),
+            // M_3, modified
+            dense_matrix_to_sparse(vec![
+                vec![0.into(), 0.into(), 0.into(), 1.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            ]),
+        ],
+    };
+    // This test case is continuation of test_reduce_d_mixed.
+    // Z[4] is a literally unconstrained cell, and Z[2] is a virtually unconstrained cell.
+    // Both should be removed.
+
+    let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Selector,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideM(1.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Selector,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideM(0.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideM(2.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Fixed,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideM(3.into()),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Instance,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(1),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Instance,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(2),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 0,
+        },
+        CCSValue::InsideZ(3),
+    );
+    cell_mapping.insert(
+        AbsoluteCellPosition {
+            column_type: VirtualColumnType::Advice,
+            column_index: 0,
+            row_index: 1,
+        },
+        CCSValue::InsideZ(4),
+    );
+
+    let mut actual = ccs.clone();
+    reduce_n(&mut actual, &mut cell_mapping);
+
+    let mut expect = CCS {
+        M: vec![
+            dense_matrix_to_sparse(vec![
+                vec![0.into(), 2.into(), 0.into()],
+                vec![0.into(), 0.into(), 0.into()],
+            ]),
+            dense_matrix_to_sparse(vec![
+                vec![0.into(), 0.into(), 1.into()],
+                vec![0.into(), 0.into(), 0.into()],
+            ]),
+        ],
+        n: 3,
+        l: 1,
+        ..ccs
+    };
+
+    assert_eq!(actual, expect);
 }
 
 fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
