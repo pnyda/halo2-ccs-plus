@@ -1,5 +1,6 @@
 use ark_pallas::Fq;
 use ff::Field;
+use folding_schemes::utils::vec::is_zero_vec;
 use halo2_proofs::circuit::Layouter;
 use halo2_proofs::circuit::SimpleFloorPlanner;
 use halo2_proofs::circuit::Value;
@@ -15,6 +16,7 @@ use halo2_proofs::plonk::Fixed;
 use halo2_proofs::plonk::TableColumn;
 use halo2_proofs::poly::Rotation;
 use halo2ccs::convert_halo2_circuit;
+use rayon::prelude::*;
 use std::collections::HashSet;
 
 // tests for the cases where the lookup input is a complex Expression
@@ -26,10 +28,12 @@ fn test_less_than_success() -> Result<(), Error> {
     let circuit = LessThanCircuit {
         less_than_200: vec![1.into(), 2.into(), 3.into(), 199.into()],
     };
-    let (_ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
 
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
+
+    let (ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
 
     let is_lookup_satisfied = lookups.into_iter().all(|(z_indices, table)| {
         z_indices
@@ -49,10 +53,12 @@ fn test_less_than_failure() -> Result<(), Error> {
     let circuit = LessThanCircuit {
         less_than_200: vec![1.into(), 2.into(), 3.into(), 200.into()],
     };
-    let (_, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
 
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     assert!(prover.verify().is_err());
+
+    let (ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
 
     let is_lookup_satisfied = lookups.into_iter().all(|(z_indices, table)| {
         z_indices
@@ -62,6 +68,26 @@ fn test_less_than_failure() -> Result<(), Error> {
             .is_subset(&table)
     });
     assert!(!is_lookup_satisfied);
+
+    Ok(())
+}
+
+#[test]
+fn test_less_than_no_unconstrained_z() -> Result<(), Error> {
+    let k = 9;
+    let circuit = LessThanCircuit {
+        less_than_200: vec![1.into(), 2.into(), 3.into(), 199.into()],
+    };
+
+    let (ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
+
+    let no_unconstrained_z = (1..z.len()).into_par_iter().all(|i| {
+        let mut z = z.clone();
+        z[i] = 123456789.into();
+        !is_zero_vec(&ccs.eval_at_z(&z).unwrap())
+    });
+    assert!(no_unconstrained_z);
 
     Ok(())
 }
