@@ -79,8 +79,9 @@ fn test_less_than_no_unconstrained_z() -> Result<(), Error> {
         less_than_200: vec![1.into(), 2.into(), 3.into(), 199.into()],
     };
 
-    let (ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    let (ccs, z, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
     assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
+    dbg!(z.len());
 
     let no_unconstrained_z = (1..z.len()).into_par_iter().all(|i| {
         let mut z = z.clone();

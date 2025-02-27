@@ -46,10 +46,7 @@ pub(crate) fn generate_mj<F: ark_ff::PrimeField>(
 }
 
 // Generate a CCS instance that works, but unoptimized.
-pub(crate) fn generate_naive_ccs_instance<
-    HALO2: ff::PrimeField<Repr = [u8; 32]>,
-    F: ark_ff::PrimeField,
->(
+fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::PrimeField>(
     custom_gates: &[Expression<HALO2>],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
     lookup_inputs: &[Expression<HALO2>],
@@ -1088,5 +1085,547 @@ mod tests {
         // Halo 2 initializes Cell A with 0, so I think we should follow that behavior.
         // Maybe it doesn't matter
         assert_eq!(z, vec![1.into(), 0.into()]);
+    }
+
+    #[test]
+    fn test_generate_naive_ccs_instance() {
+        // There are 2 custom gates.
+        let custom_gates: [Expression<Fp>; 2] = [
+            Expression::Instance(InstanceQuery {
+                index: 0,
+                column_index: 0,
+                rotation: Rotation(0),
+            }) * Expression::Advice(AdviceQuery {
+                index: 1,
+                column_index: 0,
+                rotation: Rotation(0),
+            }),
+            Expression::Instance(InstanceQuery {
+                index: 2,
+                column_index: 0,
+                rotation: Rotation(0),
+            }) + Expression::Advice(AdviceQuery {
+                index: 3,
+                column_index: 0,
+                rotation: Rotation(0),
+            }),
+        ];
+        // There are 2 lookup constraints
+        let lookup_inputs: [Expression<Fp>; 2] = [
+            // A simple lookup input creates additional witnesses in Z
+            Expression::Advice(AdviceQuery {
+                index: 4,
+                column_index: 0,
+                rotation: Rotation(0),
+            }),
+            // A complex lookup input creates additional witnesses in Z
+            Expression::Instance(InstanceQuery {
+                index: 5,
+                column_index: 0,
+                rotation: Rotation(0),
+            }) - Expression::Advice(AdviceQuery {
+                index: 6,
+                column_index: 0,
+                rotation: Rotation(0),
+            }),
+        ];
+
+        // k=1
+        let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(2),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(3),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(4),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(3),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 1,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(4),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 1,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(5),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 1,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(6),
+        );
+
+        let actual = generate_naive_ccs_instance(&custom_gates, &cell_mapping, &lookup_inputs);
+        let expect: CCS<Fq> = CCS {
+            m: 2 * 3, // The height of the Plonkish table * The number of gates
+            n: 7,     // 1 + 2 columns whose height is 2 + 2 elements for evaluated lookup inputs
+            l: 2,     // There's only one instance column, and the height is 2
+            t: 7, // There are 4 queries in custom gates + 2 queries in the second lookup input + 1 query to refer to evaluated lookup inputs
+            // Note that the query in the first lookup input will not generate a M matrix
+            q: 6, // The first 2 M matrices will be grouped together in a same monomial, all other M matrices are in its own monomial.
+            d: 2,
+            s: log2(2 * 3) as usize,
+            s_prime: log2(7) as usize,
+            c: vec![
+                1.into(),
+                1.into(),
+                1.into(),
+                1.into(),
+                (-1).into(), // -1 because the lookup input expression has subtraction
+                (-1).into(), // -1 because to constrain `lookup input expression` = `evaluated lookup input`, we constrain `lookup input expression` - `evaluated lookup input` = 0
+            ],
+            S: vec![vec![0, 1], vec![2], vec![3], vec![4], vec![5], vec![6]],
+            M: vec![
+                // This M matrix appears in the first custom gate.
+                // Queries the instance column.
+                dense_matrix_to_sparse(vec![
+                    vec![
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                ]),
+                // This M matrix appears in the first custom gate.
+                // Queries the advice column.
+                dense_matrix_to_sparse(vec![
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                ]),
+                // This M matrix appears in the second custom gate.
+                // Queries the instance column.
+                dense_matrix_to_sparse(vec![
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                ]),
+                // This M matrix appears in the second custom gate.
+                // Queries the advice column.
+                dense_matrix_to_sparse(vec![
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                ]),
+                // This M matrix appears in the third custom gate.
+                // Queries the instance column.
+                dense_matrix_to_sparse(vec![
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                ]),
+                // This M matrix appears in the third custom gate.
+                // Queries the advice column.
+                dense_matrix_to_sparse(vec![
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                ]),
+                // This M matrix appears in the third custom gate.
+                // Queries the elements in Z where evaluated lookup inputs lie.
+                dense_matrix_to_sparse(vec![
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        0.into(),
+                    ],
+                    vec![
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                    ],
+                ]),
+            ],
+        };
+        assert_eq!(actual, expect);
     }
 }
