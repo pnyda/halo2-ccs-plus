@@ -1043,6 +1043,112 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_z() {
+        // k=1
+        let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Instance,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(2),
+        );
+        // There's a copy constraint advice[0] = instance[0]
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(1),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Advice,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(3),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideZ(4),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::LookupInput,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideZ(5),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: 0,
+                row_index: 0,
+            },
+            CCSValue::InsideM(2.into()),
+        );
+        cell_mapping.insert(
+            AbsoluteCellPosition {
+                column_type: VirtualColumnType::Fixed,
+                column_index: 0,
+                row_index: 1,
+            },
+            CCSValue::InsideM(3.into()),
+        );
+
+        let lookup_input: Expression<Fp> = Expression::Advice(AdviceQuery {
+            index: 0,
+            column_index: 0,
+            rotation: Rotation::cur(),
+        }) + Expression::Instance(InstanceQuery {
+            index: 1,
+            column_index: 0,
+            rotation: Rotation::cur(),
+        });
+
+        let selectors = [[]];
+        let fixed: [[Option<Fp>; 2]; 1] = [[Some(9.into()), Some(2.into())]];
+        let advice: [[Option<Fp>; 2]; 1] = [[Some(1.into()), Some(3.into())]];
+        let instance: [[Option<Fp>; 2]; 1] = [[Some(1.into()), Some(6.into())]];
+
+        let actual: Vec<Fq> = generate_z(
+            &selectors.each_ref().map(|x| &x[..]),
+            &fixed.each_ref().map(|x| &x[..]),
+            &instance.each_ref().map(|x| &x[..]),
+            &advice.each_ref().map(|x| &x[..]),
+            &cell_mapping,
+            &[lookup_input],
+        );
+        let expect: Vec<Fq> = vec![
+            1.into(), // Z[0] is always 1
+            1.into(), // instance[0]
+            6.into(), // instance[1]
+            // advice[0] does not appear because it's deduplicated into instance[0]
+            3.into(), // advice[1]
+            2.into(), // evaluated lookup input
+            9.into(), // evaluated lookup input
+        ];
+
+        assert_eq!(actual, expect)
+    }
+
+    #[test]
     fn test_generate_z_corner_case() {
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
