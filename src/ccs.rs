@@ -202,7 +202,7 @@ pub(crate) fn reduce_d<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
                 // Either the row is a 0 vector, or only the first element of the row is filled
                 row.iter().all(|elem| {
                     F::from(0) == elem.0 // either the value is 0
-                        || elem.1 == 0 // or the row index is 0
+                        || elem.1 == 0 // or the column index is 0
                 })
             }) {
                 mj_static.push(mj);
