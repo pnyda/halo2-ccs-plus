@@ -90,13 +90,14 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
                 Expression::Instance(_) => None,
                 // If the lookup input is a complex Expression, we will create new witness, and constrain those witnesses according to the Expression<F>
                 _ => {
-                    let mut monomials = vec![Monomial {
+                    let mut monomials = get_monomials(expr);
+                    monomials.push(Monomial {
                         // here I'm constraining for each row
                         // expr - Z[z_index where the lookup input lies] = 0
                         coefficient: -F::one(),
                         variables: vec![Query::LookupInput(lookup_index)],
-                    }];
-                    monomials.extend(get_monomials(expr));
+                    });
+
                     Some(monomials)
                 }
             }),
@@ -154,7 +155,7 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
         t: M.len(),
         q: S.len(),
         d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(1),
-        s: log2(table_height) as usize,
+        s: log2(m) as usize,
         s_prime: log2(z_height) as usize,
         M,
         S,
@@ -1626,6 +1627,7 @@ mod tests {
                 ]),
             ],
         };
+
         assert_eq!(actual, expect);
     }
 }
