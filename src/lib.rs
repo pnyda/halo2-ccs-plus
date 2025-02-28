@@ -133,76 +133,58 @@ pub fn convert_halo2_circuit<
         &lookup_inputs,
     );
 
+    // Generate fixed lookup tables.
+    // In the original CCS paper, there was only one lookup table T.
+    // However, this implementation supports multiple lookup tables.
     let tables: Vec<Vec<ARKWORKS>> = lookups
         .iter()
         .map(|(_, table_expr)| {
-            (0..1 << k)
-                .map(|at_row| {
-                    let scalar = table_expr
-                        .evaluate(
-                            &|constant| Some(constant),
-                            &|query: Selector| {
-                                if selectors[query.0][at_row] {
-                                    Some(1.into())
-                                } else {
-                                    Some(0.into())
-                                }
-                            },
-                            &|query: FixedQuery| {
-                                fixed[query.column_index][(at_row as i32 + query.rotation.0)
-                                    .rem_euclid((1 << k) as i32)
-                                    as usize]
-                            },
-                            &|query: AdviceQuery| {
-                                advice[query.column_index][(at_row as i32 + query.rotation.0)
-                                    .rem_euclid((1 << k) as i32)
-                                    as usize]
-                            },
-                            &|query: InstanceQuery| {
-                                instance_option[query.column_index][(at_row as i32
-                                    + query.rotation.0)
-                                    .rem_euclid((1 << k) as i32)
-                                    as usize]
-                            },
-                            &|x| x.map(|x| -x),
-                            &|lhs, rhs| lhs.and_then(|lhs| rhs.map(|rhs| lhs + rhs)),
-                            &|lhs, rhs| lhs.and_then(|lhs| rhs.map(|rhs| lhs * rhs)),
-                            &|lhs, constant| lhs.map(|lhs| lhs * constant),
-                        )
-                        .unwrap_or(0.into());
-
-                    // Here we initialize unassigned cells in a lookup table with 0.
-                    // This mimics Halo2's behavior.
-                    // https://github.com/zcash/halo2/blob/fed6b000857f27e23ddb07454da8bde4697204f7/halo2_proofs/src/circuit/floor_planner/single_pass.rs#L180
-
-                    ARKWORKS::from_le_bytes_mod_order(&scalar.to_repr())
-                })
-                .collect()
+            if let Expression::Fixed(query) = table_expr {
+                fixed[query.column_index]
+                    .iter()
+                    .map(|cell| {
+                        // Here we initialize unassigned cells in a lookup table with 0.
+                        // This mimics Halo2's behavior.
+                        // https://github.com/zcash/halo2/blob/fed6b000857f27e23ddb07454da8bde4697204f7/halo2_proofs/src/circuit/floor_planner/single_pass.rs#L180
+                        ARKWORKS::from_le_bytes_mod_order(&cell.unwrap_or(0.into()).to_repr())
+                    })
+                    .collect()
+            } else {
+                // pse/halo2 lets table_expr to be something other than FixedQuery, but we're working on zcash/halo2.
+                panic!("zcash/halo2 supports only fixed lookup tables.")
+            }
         })
         .collect();
 
-    let LandT = (0..lookups.len())
-        .map(|lookup_index| {
-            (
-                cell_mapping
-                    .iter()
-                    .filter_map(|(position, value)| {
-                        if position.column_type == VirtualColumnType::LookupInput
-                            && position.column_index == lookup_index
-                        {
-                            if let CCSValue::InsideZ(z_index) = value {
-                                Some(z_index)
-                            } else {
-                                None
-                            }
+    // Generate multiple Ls.
+    // In the original CCS paper, there was only one L.
+    // But this implementation supports multiple lookup tables, so there should be one L for each T.
+    let LandT = tables
+        .into_iter()
+        .enumerate()
+        .map(|(lookup_index, T)| {
+            // cell_mapping keeps track of z_index where evaluations of lookup inputs lies.
+            // So we read it here.
+            // Check generate_cell_mapping's implementation for more.
+            let L = cell_mapping
+                .iter()
+                .filter_map(|(position, value)| {
+                    if position.column_type == VirtualColumnType::LookupInput
+                        && position.column_index == lookup_index
+                    {
+                        if let CCSValue::InsideZ(z_index) = value {
+                            // This z_index is the o in the paper.
+                            Some(z_index)
                         } else {
                             None
                         }
-                    })
-                    .copied()
-                    .collect(),
-                tables[lookup_index].clone(),
-            )
+                    } else {
+                        None
+                    }
+                })
+                .copied()
+                .collect();
+            (L, T)
         })
         .collect();
 
