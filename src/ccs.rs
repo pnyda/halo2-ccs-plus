@@ -411,7 +411,7 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
             CCSValue::InsideM(_) => 0,
         })
         .max()
-        .expect("|Z| must be above 2");
+        .expect("We're trying to generate a CCS instance with no witnesses. There's no point in continueing the process.");
 
     // Here we initialize unassigned cells in the original Plonkish table with 0.
     // This mimics Halo2's behavior.
