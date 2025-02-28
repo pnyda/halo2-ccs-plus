@@ -7,6 +7,7 @@ use ark_poly::{EvaluationDomain, Evaluations, Radix2EvaluationDomain};
 use ark_std::log2;
 use ark_std::rand::rngs::OsRng;
 use std::ops::Add;
+use std::ops::Div;
 use std::ops::Mul;
 use std::ops::Sub;
 
@@ -146,8 +147,10 @@ fn zero_test<F: FftField + PrimeField>(
     poly: &DensePolynomial<F>,
     domain: Radix2EvaluationDomain<F>,
 ) -> bool {
-    let (_, r) = poly.divide_by_vanishing_poly(domain);
-    r.coeffs.iter().all(|coeff| *coeff == F::zero())
+    let (q, _r) = poly.divide_by_vanishing_poly(domain);
+    let random_challenge = F::rand(&mut OsRng);
+    poly.evaluate(&random_challenge)
+        == q.evaluate(&random_challenge) * domain.vanishing_polynomial().evaluate(&random_challenge)
 }
 
 // Given a multiset a = {2, 2, 1, 1} and a multiset s = {4, 2, 3, 1},
