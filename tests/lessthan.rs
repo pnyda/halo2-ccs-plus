@@ -15,9 +15,8 @@ use halo2_proofs::plonk::Expression;
 use halo2_proofs::plonk::Fixed;
 use halo2_proofs::plonk::TableColumn;
 use halo2_proofs::poly::Rotation;
-use halo2ccs::convert_halo2_circuit;
+use halo2ccs::{convert_halo2_circuit, is_ccs_plus_satisfied};
 use rayon::prelude::*;
-use std::collections::HashSet;
 
 // tests for the cases where the lookup input is a complex Expression
 // The code behaves differently depending on if the lookup input is complex or not so I need to test both cases
@@ -33,16 +32,7 @@ fn test_less_than_success() -> Result<(), Error> {
     assert_eq!(prover.verify(), Ok(()));
 
     let (ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
-    assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
-
-    let is_lookup_satisfied = lookups.into_iter().all(|(z_indices, table)| {
-        z_indices
-            .into_iter()
-            .map(|z_index| z[z_index])
-            .collect::<HashSet<_>>()
-            .is_subset(&table)
-    });
-    assert!(is_lookup_satisfied);
+    assert!(is_ccs_plus_satisfied(ccs, &z, lookups));
 
     Ok(())
 }
@@ -58,16 +48,7 @@ fn test_less_than_failure() -> Result<(), Error> {
     assert!(prover.verify().is_err());
 
     let (ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
-    assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
-
-    let is_lookup_satisfied = lookups.into_iter().all(|(z_indices, table)| {
-        z_indices
-            .into_iter()
-            .map(|z_index| z[z_index])
-            .collect::<HashSet<_>>()
-            .is_subset(&table)
-    });
-    assert!(!is_lookup_satisfied);
+    assert!(!is_ccs_plus_satisfied(ccs, &z, lookups));
 
     Ok(())
 }

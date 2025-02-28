@@ -12,8 +12,7 @@ use halo2_proofs::plonk::Error;
 use halo2_proofs::plonk::Expression;
 use halo2_proofs::plonk::TableColumn;
 use halo2_proofs::poly::Rotation;
-use halo2ccs::convert_halo2_circuit;
-use std::collections::HashSet;
+use halo2ccs::{convert_halo2_circuit, is_ccs_plus_satisfied};
 
 // Tests for cases where the lookup input is a simple query
 // The code behaves differently depending on if the lookup input is complex or not so I need to test both cases
@@ -24,19 +23,12 @@ fn test_range_success() -> Result<(), Error> {
     let circuit = RangeCircuit {
         bytes: vec![1.into(), 2.into(), 3.into(), 255.into()],
     };
-    let (_ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    let (ccs, z, LandT) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
 
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
 
-    let is_lookup_satisfied = lookups.into_iter().all(|(z_indices, table)| {
-        z_indices
-            .into_iter()
-            .map(|z_index| z[z_index])
-            .collect::<HashSet<_>>()
-            .is_subset(&table)
-    });
-    assert!(is_lookup_satisfied);
+    assert!(is_ccs_plus_satisfied(ccs, &z, LandT));
 
     Ok(())
 }
@@ -47,19 +39,12 @@ fn test_range_failure() -> Result<(), Error> {
     let circuit = RangeCircuit {
         bytes: vec![1.into(), 2.into(), 3.into(), 256.into()],
     };
-    let (_ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    let (ccs, z, LandT) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
 
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     assert!(prover.verify().is_err());
 
-    let is_lookup_satisfied = lookups.into_iter().all(|(z_indices, table)| {
-        z_indices
-            .into_iter()
-            .map(|z_index| z[z_index])
-            .collect::<HashSet<_>>()
-            .is_subset(&table)
-    });
-    assert!(!is_lookup_satisfied);
+    assert!(!is_ccs_plus_satisfied(ccs, &z, LandT));
 
     Ok(())
 }

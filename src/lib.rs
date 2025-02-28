@@ -1,11 +1,13 @@
 #![allow(non_snake_case)]
 use folding_schemes::arith::ccs::CCS;
+use folding_schemes::utils::vec::is_zero_vec;
 use halo2_proofs::circuit::Value;
 use halo2_proofs::dump::dump_gates;
 use halo2_proofs::dump::dump_lookups;
 use halo2_proofs::dump::AssignmentDumper;
 use halo2_proofs::plonk;
 use halo2_proofs::plonk::*;
+use lookup::check_lookup_satisfiability;
 use std::collections::HashSet;
 
 mod query;
@@ -51,7 +53,7 @@ pub fn convert_halo2_circuit<
     (
         CCS<ARKWORKS>,
         Vec<ARKWORKS>,
-        Vec<(HashSet<usize>, HashSet<ARKWORKS>)>,
+        Vec<(HashSet<usize>, Vec<ARKWORKS>)>,
     ),
     plonk::Error,
 > {
@@ -121,6 +123,10 @@ pub fn convert_halo2_circuit<
     );
 
     let custom_gates = dump_gates::<HALO2, C>()?;
+    dbg!(custom_gates.len());
+    dbg!(&custom_gates);
+    dbg!(lookup_inputs.len());
+
     let ccs_instance: CCS<ARKWORKS> =
         generate_ccs_instance(&custom_gates, &mut cell_mapping, &lookup_inputs);
     let z: Vec<ARKWORKS> = generate_z(
@@ -132,7 +138,7 @@ pub fn convert_halo2_circuit<
         &lookup_inputs,
     );
 
-    let tables: Vec<HashSet<ARKWORKS>> = lookups
+    let tables: Vec<Vec<ARKWORKS>> = lookups
         .iter()
         .map(|(_, table_expr)| {
             (0..1 << k)
@@ -215,4 +221,28 @@ pub fn convert_halo2_circuit<
     );
 
     Ok((ccs_instance, z, LandT))
+}
+
+/// Takes the output of `convert_halo2_circuit`, and check if the CCS+ instance is satisfied.
+pub fn is_ccs_plus_satisfied<F: ark_ff::PrimeField>(
+    ccs: CCS<F>,
+    z: &[F],
+    LandT: Vec<(HashSet<usize>, Vec<F>)>,
+) -> bool {
+    if let Ok(ccs_lhs) = ccs.eval_at_z(z) {
+        if !is_zero_vec(&ccs_lhs) {
+            return false;
+        }
+    } else {
+        return false;
+    };
+
+    for (L, T) in LandT.iter() {
+        let subset: Vec<F> = L.iter().map(|o| z[*o]).collect();
+        if !check_lookup_satisfiability(&subset, T) {
+            return false;
+        }
+    }
+
+    return true;
 }

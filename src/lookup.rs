@@ -7,14 +7,20 @@ use ark_poly::{EvaluationDomain, Evaluations, Radix2EvaluationDomain};
 use ark_std::log2;
 use ark_std::rand::rngs::OsRng;
 use std::ops::Add;
-use std::ops::Div;
 use std::ops::Mul;
 use std::ops::Sub;
 
 pub(crate) fn check_lookup_satisfiability<F: PrimeField>(subset: &[F], superset: &[F]) -> bool {
-    let (subset_sorted, superset_sorted) = crate::lookup::sort(&subset, &superset);
+    assert!(superset.len().is_power_of_two());
+
+    // subset.len() must be superset.len()
+    // so in the case it doesn't hold, we need to duplicate some elements in subset
+    let mut subset_filled = vec![subset[0]; superset.len()];
+    subset_filled[0..subset.len()].clone_from_slice(&subset);
+
+    let (subset_sorted, superset_sorted) = crate::lookup::sort(&subset_filled, &superset);
     let is_multiset_equal =
-        check_multiset_equality(&superset, &superset_sorted, &subset_sorted, &subset);
+        check_multiset_equality(&superset, &superset_sorted, &subset_sorted, &subset_filled);
     let is_copying_this_or_that = copy_this_or_that(&superset_sorted, &subset_sorted);
 
     is_multiset_equal && is_copying_this_or_that
