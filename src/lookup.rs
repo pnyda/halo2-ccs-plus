@@ -11,12 +11,8 @@ use std::ops::Div;
 use std::ops::Mul;
 use std::ops::Sub;
 
-pub(crate) fn check_lookup_satisfiability<F: PrimeField>(
-    k: u32,
-    subset: Vec<F>,
-    superset: Vec<F>,
-) -> bool {
-    let (subset_sorted, superset_sorted) = crate::lookup::sort(k, &subset, &superset);
+pub(crate) fn check_lookup_satisfiability<F: PrimeField>(subset: &[F], superset: &[F]) -> bool {
+    let (subset_sorted, superset_sorted) = crate::lookup::sort(&subset, &superset);
     let is_multiset_equal =
         check_multiset_equality(&superset, &superset_sorted, &subset_sorted, &subset);
     let is_copying_this_or_that = copy_this_or_that(&superset_sorted, &subset_sorted);
@@ -191,15 +187,14 @@ fn zero_test<F: FftField + PrimeField>(
 // Output a' = [1, 1, 2, 2] and s' = [1, 3, 2, 4]
 // When a' changes at ith element, s'[i] == a'[i]
 fn sort<F: PrimeField>(
-    k: u32,
     subset: &[F],
     superset: &[F],
 ) -> (
     Vec<F>, // subset sorted
     Vec<F>, // superset sorted
 ) {
-    assert_eq!(subset.len(), 1 << k);
-    assert_eq!(superset.len(), 1 << k);
+    assert_eq!(subset.len(), superset.len());
+    assert!(superset.len().is_power_of_two());
 
     let mut subset_sorted: Vec<F> = subset.to_vec();
     subset_sorted.sort();
@@ -246,7 +241,7 @@ mod tests {
     fn test_sort() {
         let subset: [Fq; 4] = [2.into(), 2.into(), 1.into(), 1.into()];
         let superset: [Fq; 4] = [4.into(), 2.into(), 1.into(), 2.into()];
-        let (subset_sorted, superset_sorted) = super::sort(2, &subset, &superset);
+        let (subset_sorted, superset_sorted) = super::sort(&subset, &superset);
 
         assert_eq!(subset_sorted, vec![1.into(), 1.into(), 2.into(), 2.into()]);
         assert_eq!(
