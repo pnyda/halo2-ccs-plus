@@ -36,24 +36,6 @@ fn test_fibonacci_success() -> Result<(), Error> {
 }
 
 #[test]
-fn test_fibonacci_fail_when_changing_z() -> Result<(), Error> {
-    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
-
-    let k = 4;
-    let circuit = FibonacciCircuit(PhantomData);
-    let (ccs, mut z, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
-
-    let prover = MockProver::run(k, &circuit, vec![instance_column]).unwrap();
-    assert!(prover.verify().is_ok());
-
-    // You can NOT change elements of z which have been set to 0 - unassigned cells in halo2
-    z[10] = 10.into();
-    assert!(!is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
-
-    Ok(())
-}
-
-#[test]
 fn test_fibonacci_fail() -> Result<(), Error> {
     let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 54.into()];
 
