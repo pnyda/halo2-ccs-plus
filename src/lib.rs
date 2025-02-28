@@ -92,21 +92,9 @@ pub fn convert_halo2_circuit<
     // FIXME: Isn't there a better way to make &[&[A]] from Vec<Vec<A>>?
     let instance_option: Vec<&[Option<HALO2>]> =
         instance_option.iter().map(Vec::as_slice).collect();
-    let advice: Vec<&[Option<HALO2>]> = cell_dumper
-        .advice
-        .iter()
-        .map(|x| x.as_slice())
-        .collect::<Vec<_>>();
-    let fixed: Vec<&[Option<HALO2>]> = cell_dumper
-        .fixed
-        .iter()
-        .map(|x| x.as_slice())
-        .collect::<Vec<_>>();
-    let selectors: Vec<&[bool]> = cell_dumper
-        .selectors
-        .iter()
-        .map(|x| x.as_slice())
-        .collect::<Vec<_>>();
+    let advice: Vec<&[Option<HALO2>]> = cell_dumper.advice.iter().map(Vec::as_slice).collect();
+    let fixed: Vec<&[Option<HALO2>]> = cell_dumper.fixed.iter().map(Vec::as_slice).collect();
+    let selectors: Vec<&[bool]> = cell_dumper.selectors.iter().map(Vec::as_slice).collect();
 
     let lookups = dump_lookups::<HALO2, C>()?;
     let lookup_inputs: Vec<Expression<HALO2>> =
