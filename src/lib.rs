@@ -108,8 +108,6 @@ pub fn convert_halo2_circuit<
         .map(|x| x.as_slice())
         .collect::<Vec<_>>();
 
-    dbg!(cell_dumper.copy_constraints.len());
-
     let lookups = dump_lookups::<HALO2, C>()?;
     let lookup_inputs: Vec<Expression<HALO2>> =
         lookups.iter().map(|(input, _)| input).cloned().collect();
@@ -123,9 +121,6 @@ pub fn convert_halo2_circuit<
     );
 
     let custom_gates = dump_gates::<HALO2, C>()?;
-    dbg!(custom_gates.len());
-    dbg!(&custom_gates);
-    dbg!(lookup_inputs.len());
 
     let ccs_instance: CCS<ARKWORKS> =
         generate_ccs_instance(&custom_gates, &mut cell_mapping, &lookup_inputs);

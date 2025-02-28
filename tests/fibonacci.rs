@@ -46,8 +46,6 @@ fn test_fibonacci_fail_when_changing_z() -> Result<(), Error> {
     let prover = MockProver::run(k, &circuit, vec![instance_column]).unwrap();
     assert!(prover.verify().is_ok());
 
-    dbg!(z.len());
-
     // You can NOT change elements of z which have been set to 0 - unassigned cells in halo2
     z[10] = 10.into();
     assert!(!is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
