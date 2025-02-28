@@ -36,7 +36,7 @@ use ccs::*;
 /// Converts a Halo2 circuit into a sonobe CCS instance.
 ///
 /// * `k` log_2(the height of the Plonkish table)
-/// * `c` A Halo2 circuit you wish to convert
+/// * `circuit` A Halo2 circuit you wish to convert
 /// * `instance` Assignments to the instance columns. The length of this slice must equal the number of the instance columns in `c`.
 ///
 /// Returns a pair of (a ccs instance, the witness vector Z, and lookup constraints)
