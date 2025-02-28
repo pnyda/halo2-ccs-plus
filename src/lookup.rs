@@ -36,6 +36,7 @@ fn copy_this_or_that<F: PrimeField + FftField>(superset_sorted: &[F], subset_sor
     // We'll need to handle polynomials with larger degrees.
     let expanded_domain = Radix2EvaluationDomain::new(1 << k << 1).unwrap();
 
+    // TODO: It's wasteful to expand the evaluation domain in both copy_this_or_that and check_multiset_equality. We should do it only once.
     let mut subset_sorted = subset_sorted.to_vec();
     let A_prime = Evaluations::from_vec_and_domain(subset_sorted.clone(), original_domain)
         .interpolate()

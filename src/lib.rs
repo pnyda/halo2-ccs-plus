@@ -212,12 +212,12 @@ pub fn convert_halo2_circuit<
         .collect();
 
     println!(
-        "The number of advice cells in the original Plonkish table: {}",
-        advice.len() * advice[0].len()
+        "The number of advice/instance cells in the original Plonkish table: {}",
+        (meta.num_advice_columns + meta.num_instance_columns) * (1 << k)
     );
     println!(
-        "The number of witnesses in the transpiled CCS circuit: {}",
-        z.len() - ccs_instance.l
+        "The height of the witness vector Z in the transpiled CCS circuit: {}",
+        ccs_instance.n
     );
 
     Ok((ccs_instance, z, LandT))
