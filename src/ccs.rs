@@ -56,14 +56,6 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
         .map(|cell_position| cell_position.row_index + 1)
         .max()
         .expect("Empty cell_mapping");
-    let z_height = cell_mapping
-        .values()
-        .map(|ccs_value| match ccs_value {
-            CCSValue::InsideZ(z_index) => *z_index + 1,
-            CCSValue::InsideM(_) => 0,
-        })
-        .max()
-        .expect("Empty cell mapping");
     let num_instance_cells: usize = cell_mapping
         .keys()
         .map(|cell_position| {
@@ -74,6 +66,15 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
             }
         })
         .sum();
+    let z_height = cell_mapping
+        .values()
+        .map(|ccs_value| match ccs_value {
+            CCSValue::InsideZ(z_index) => *z_index + 1,
+            CCSValue::InsideM(_) => 1,
+        })
+        .max()
+        .unwrap_or(1);
+    assert!(1 < z_height, "We're about to generate a CCS instance with no witnesses. There's no point in continuing the process.");
 
     let mut gates: Vec<Vec<Monomial<F>>> = custom_gates
         .iter()
@@ -408,10 +409,11 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
         .values()
         .map(|ccs_value| match ccs_value {
             CCSValue::InsideZ(z_index) => *z_index + 1,
-            CCSValue::InsideM(_) => 0,
+            CCSValue::InsideM(_) => 1,
         })
         .max()
-        .expect("We're trying to generate a CCS instance with no witnesses. There's no point in continueing the process.");
+        .unwrap_or(1);
+    assert!(1 < z_height, "We're about to generate a CCS instance with no witnesses. There's no point in continuing the process.");
 
     // Here we initialize unassigned cells in the original Plonkish table with 0.
     // This mimics Halo2's behavior.
