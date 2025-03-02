@@ -8,6 +8,7 @@ use halo2_proofs::dump::AssignmentDumper;
 use halo2_proofs::plonk;
 use halo2_proofs::plonk::*;
 use lookup::check_lookup_satisfiability;
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 mod query;
@@ -35,12 +36,17 @@ use ccs::*;
 
 /// Converts a Halo2 circuit into a sonobe CCS instance.
 ///
-/// * `k` log_2(the height of the Plonkish table)
-/// * `circuit` A Halo2 circuit you wish to convert
-/// * `instance` Assignments to the instance columns. The length of this slice must equal the number of the instance columns in `c`.
+/// - `k` log_2(the height of the Plonkish table)
+/// - `circuit` A Halo2 circuit you wish to convert
+/// - `instance` Assignments to the instance columns. The length of this slice must equal the number of the instance columns in `circuit`.
 ///
-/// Returns a pair of (a ccs instance, the witness vector Z, and lookup constraints)
-/// lookup constraints takes a form of Vec<(L, T)> where for every o ∈ L, z[o] must be in T
+/// Returns
+/// - A CCS instance
+/// - The witness vector Z
+/// - Lookup constraints
+/// - A map from a cell position in the original Plonkish table to the position in `Z`.
+///
+/// lookup constraints takes a form of Vec<(L, T)> where for every o ∈ L, z\[o\] must be in T.
 pub fn convert_halo2_circuit<
     HALO2: ff::PrimeField<Repr = [u8; 32]>,
     C: Circuit<HALO2>,
@@ -54,6 +60,7 @@ pub fn convert_halo2_circuit<
         CCS<ARKWORKS>,
         Vec<ARKWORKS>,
         Vec<(HashSet<usize>, Vec<ARKWORKS>)>,
+        HashMap<AbsoluteCellPosition, usize>,
     ),
     plonk::Error,
 > {
@@ -185,7 +192,21 @@ pub fn convert_halo2_circuit<
         ccs_instance.n
     );
 
-    Ok((ccs_instance, z, LandT))
+    let z_index_map: HashMap<AbsoluteCellPosition, usize> = cell_mapping
+        .into_iter()
+        .filter_map(|(key, value)| {
+            if let CCSValue::InsideZ(z_index) = value {
+                // Expose the mapping between advice/instance cell position and z_index,
+                // Users might want to add constraints to those witnesses later in Sonobe.
+                Some((key, z_index))
+            } else {
+                // There's no point in exposing fixed cell assignments.
+                None
+            }
+        })
+        .collect();
+
+    Ok((ccs_instance, z, LandT, z_index_map))
 }
 
 /// Takes the output of `convert_halo2_circuit`, and check if the CCS+ instance is satisfied.

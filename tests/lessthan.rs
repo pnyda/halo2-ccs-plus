@@ -31,7 +31,7 @@ fn test_less_than_success() -> Result<(), Error> {
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
 
-    let (ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    let (ccs, z, lookups, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
     assert!(is_ccs_plus_satisfied(ccs, &z, lookups));
 
     Ok(())
@@ -47,7 +47,7 @@ fn test_less_than_failure() -> Result<(), Error> {
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     assert!(prover.verify().is_err());
 
-    let (ccs, z, lookups) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    let (ccs, z, lookups, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
     assert!(!is_ccs_plus_satisfied(ccs, &z, lookups));
 
     Ok(())
@@ -60,7 +60,7 @@ fn test_less_than_no_unconstrained_z() -> Result<(), Error> {
         less_than_200: vec![1.into(), 2.into(), 3.into(), 199.into()],
     };
 
-    let (ccs, z, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    let (ccs, z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
     assert!(is_zero_vec(&ccs.eval_at_z(&z).unwrap()));
 
     let no_unconstrained_z = (1..z.len()).into_par_iter().all(|i| {

@@ -12,7 +12,7 @@ use std::hash::Hash;
 // If there was a copy constraint between an advice cell and a fixed cell,
 //   the former will get deduplicated into the latter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) enum VirtualColumnType {
+pub enum VirtualColumnType {
     LookupInput,
     Selector,
     Fixed,
@@ -39,7 +39,7 @@ impl From<Any> for VirtualColumnType {
 
 // This feels unintuitive but Halo2's internal works that way so I didn't bother to change it.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct AbsoluteCellPosition {
+pub struct AbsoluteCellPosition {
     pub(crate) column_type: VirtualColumnType,
     pub(crate) column_index: usize,
     pub(crate) row_index: usize,

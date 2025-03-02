@@ -23,7 +23,7 @@ fn test_range_success() -> Result<(), Error> {
     let circuit = RangeCircuit {
         bytes: vec![1.into(), 2.into(), 3.into(), 255.into()],
     };
-    let (ccs, z, LandT) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    let (ccs, z, LandT, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
 
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
@@ -39,7 +39,7 @@ fn test_range_failure() -> Result<(), Error> {
     let circuit = RangeCircuit {
         bytes: vec![1.into(), 2.into(), 3.into(), 256.into()],
     };
-    let (ccs, z, LandT) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
+    let (ccs, z, LandT, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[])?;
 
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     assert!(prover.verify().is_err());

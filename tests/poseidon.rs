@@ -38,7 +38,7 @@ fn test_poseidon_success() -> Result<(), Error> {
         message: Value::known(message),
         _spec: PhantomData,
     };
-    let (ccs, z, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
+    let (ccs, z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
 
     let prover = MockProver::run(k, &circuit, vec![vec![output]]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
@@ -57,7 +57,7 @@ fn test_poseidon_fail() -> Result<(), Error> {
         message: Value::known(message),
         _spec: PhantomData,
     };
-    let (ccs, z, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
+    let (ccs, z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
 
     let prover = MockProver::run(k, &circuit, vec![vec![output]]).unwrap();
     assert!(prover.verify().is_err());
@@ -84,7 +84,7 @@ fn test_poseidon_no_unconstrained_z() -> Result<(), Error> {
         message: Value::known(message),
         _spec: PhantomData,
     };
-    let (ccs, z, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
+    let (ccs, z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
 
     let no_unconstrained_z = (1..z.len()).into_par_iter().all(|i| {
         let mut z = z.clone();
