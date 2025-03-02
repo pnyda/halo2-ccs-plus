@@ -96,7 +96,6 @@ pub fn convert_halo2_circuit<
     cell_dumper.instance = instance_value;
     C::FloorPlanner::synthesize(&mut cell_dumper, circuit, config, meta.constants.clone())?;
 
-    // FIXME: Isn't there a better way to make &[&[A]] from Vec<Vec<A>>?
     let instance_option: Vec<&[Option<HALO2>]> =
         instance_option.iter().map(Vec::as_slice).collect();
     let advice: Vec<&[Option<HALO2>]> = cell_dumper.advice.iter().map(Vec::as_slice).collect();
