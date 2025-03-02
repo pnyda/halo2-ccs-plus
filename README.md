@@ -18,3 +18,9 @@ If you need to switch dependencies of dependencies at once then you can use:
 halo2_proofs = { git = "https://github.com/pnyda/halo2.git", branch = "ccs" }
 halo2_gadgets = { git = "https://github.com/pnyda/halo2.git", branch = "ccs" }
 ```
+
+# test
+The test code uses rayon internally, so I recommend you to run `cargo test` in single threaded mode.
+```sh
+cargo test -- --test-threads=1 --nocapture
+```
