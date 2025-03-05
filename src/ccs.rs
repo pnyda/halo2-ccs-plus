@@ -404,7 +404,13 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>>,
     lookup_inputs: &[Expression<HALO2>],
 ) -> Vec<ARKWORKS> {
-    let table_height = advice[0].len();
+    let table_height = advice
+        .first()
+        .map(|column| column.len())
+        .or_else(|| instance.first().map(|column| column.len()))
+        .or_else(|| fixed.first().map(|column| column.len()))
+        .or_else(|| selector.first().map(|column| column.len()))
+        .expect("The width of the Plonkish table is 0. Can't continue.");
     let z_height = cell_mapping
         .values()
         .map(|ccs_value| match ccs_value {

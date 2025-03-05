@@ -85,7 +85,14 @@ pub(crate) fn generate_cell_mapping<
     deduplicate_witness(&mut cell_mapping, copy_constraints);
 
     // Next, incorporate lookup constraints into the mapping.
-    let table_height = advice[0].len();
+    let table_height = advice
+        .first()
+        .map(|column| column.len())
+        .or_else(|| instance.first().map(|column| column.len()))
+        .or_else(|| fixed.first().map(|column| column.len()))
+        .or_else(|| selectors.first().map(|column| column.len()))
+        .expect("The width of the Plonkish table is 0. Can't continue.");
+
     for (lookup_index, lookup_input) in lookup_inputs.iter().enumerate() {
         for y in 0..table_height {
             let key = AbsoluteCellPosition {
