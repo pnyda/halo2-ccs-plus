@@ -6,21 +6,41 @@ use ark_poly::Polynomial;
 use ark_poly::{EvaluationDomain, Evaluations, Radix2EvaluationDomain};
 use ark_std::log2;
 use ark_std::rand::rngs::OsRng;
+use std::collections::HashSet;
 use std::ops::Add;
 use std::ops::Mul;
 use std::ops::Sub;
 
-pub(crate) fn check_lookup_satisfiability<F: PrimeField>(subset: &[F], superset: &[F]) -> bool {
-    assert!(superset.len().is_power_of_two());
+pub(crate) fn check_lookup_satisfiability<F: PrimeField>(
+    subset: &HashSet<F>,
+    superset: &HashSet<F>,
+) -> bool {
+    assert!(0 < subset.len());
+    assert!(0 < superset.len());
+    let k = log2(subset.len().max(superset.len()));
 
-    // subset.len() must be superset.len()
-    // so in the case it doesn't hold, we need to duplicate some elements in subset
-    let mut subset_filled = vec![subset[0]; superset.len()];
-    subset_filled[0..subset.len()].clone_from_slice(&subset);
+    // lookup::sort expects a Vec with length 2^k
+    // So we need to add duplicate elements
 
-    let (subset_sorted, superset_sorted) = crate::lookup::sort(&subset_filled, &superset);
-    let is_multiset_equal =
-        check_multiset_equality(&superset, &superset_sorted, &subset_sorted, &subset_filled);
+    let mut superset_filled: Vec<F> = superset.into_iter().copied().collect();
+    superset_filled.extend(vec![
+        superset_filled.last().copied().unwrap();
+        (1 << k) - superset_filled.len()
+    ]);
+
+    let mut subset_filled: Vec<F> = subset.into_iter().copied().collect();
+    subset_filled.extend(vec![
+        subset_filled.last().copied().unwrap();
+        (1 << k) - subset_filled.len()
+    ]);
+
+    let (subset_sorted, superset_sorted) = crate::lookup::sort(&subset_filled, &superset_filled);
+    let is_multiset_equal = check_multiset_equality(
+        &superset_filled,
+        &superset_sorted,
+        &subset_sorted,
+        &subset_filled,
+    );
     let is_copying_this_or_that = copy_this_or_that(&superset_sorted, &subset_sorted);
 
     is_multiset_equal && is_copying_this_or_that

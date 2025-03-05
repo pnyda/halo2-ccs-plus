@@ -59,7 +59,7 @@ pub fn convert_halo2_circuit<
     (
         CCS<ARKWORKS>,
         Vec<ARKWORKS>,
-        Vec<(HashSet<usize>, Vec<ARKWORKS>)>,
+        Vec<(HashSet<usize>, HashSet<ARKWORKS>)>,
         HashMap<AbsoluteCellPosition, usize>,
     ),
     plonk::Error,
@@ -130,18 +130,19 @@ pub fn convert_halo2_circuit<
     // Generate fixed lookup tables.
     // In the original CCS paper, there was only one lookup table T.
     // However, this implementation supports multiple lookup tables.
-    let tables: Vec<Vec<ARKWORKS>> = lookups
+    let tables: Vec<HashSet<ARKWORKS>> = lookups
         .iter()
         .map(|(_, table_expr)| {
             if let Expression::Fixed(query) = table_expr {
+                // Here we skip unassigned cells in fixed[query.column_index]. Why? When you call assign_table in Halo2, it fills unassigned cells in a lookup table with duplicates of the smallest assigned cell in the table.
+                // This is done by assign_table calling Assignment::fill_from_row.
+                // Since we are extracting cell assignments by implementing our own Assignment, we see here a bunch of duplicate cells I mentioned.
+                // That means, unassigned cells we see here are cells reserved for blinding factors.
+                // See zero-knowledge adjustments https://zcash.github.io/halo2/design/proving-system/lookup.html#zero-knowledge-adjustment
                 fixed[query.column_index]
                     .iter()
-                    .map(|cell| {
-                        // Here we initialize unassigned cells in a lookup table with 0.
-                        // This mimics Halo2's behavior.
-                        // https://github.com/zcash/halo2/blob/fed6b000857f27e23ddb07454da8bde4697204f7/halo2_proofs/src/circuit/floor_planner/single_pass.rs#L180
-                        ARKWORKS::from_le_bytes_mod_order(&cell.unwrap_or(0.into()).to_repr())
-                    })
+                    .filter_map(|cell| *cell)
+                    .map(|cell| ARKWORKS::from_le_bytes_mod_order(&cell.to_repr()))
                     .collect()
             } else {
                 // pse/halo2 lets table_expr to be something other than FixedQuery, but we're working on zcash/halo2.
@@ -212,7 +213,7 @@ pub fn convert_halo2_circuit<
 pub fn is_ccs_plus_satisfied<F: ark_ff::PrimeField>(
     ccs: CCS<F>,
     z: &[F],
-    LandT: Vec<(HashSet<usize>, Vec<F>)>,
+    LandT: Vec<(HashSet<usize>, HashSet<F>)>,
 ) -> bool {
     if let Ok(ccs_lhs) = ccs.eval_at_z(z) {
         if !is_zero_vec(&ccs_lhs) {
@@ -223,7 +224,7 @@ pub fn is_ccs_plus_satisfied<F: ark_ff::PrimeField>(
     };
 
     for (L, T) in LandT.iter() {
-        let subset: Vec<F> = L.iter().map(|o| z[*o]).collect();
+        let subset: HashSet<F> = L.iter().map(|o| z[*o]).collect();
         if !check_lookup_satisfiability(&subset, T) {
             return false;
         }
