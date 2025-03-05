@@ -65,35 +65,27 @@ pub fn convert_halo2_circuit<
     plonk::Error,
 > {
     let mut meta = ConstraintSystem::<HALO2>::default();
+    // This line updates meta.num_instance_columns
     let config = C::configure(&mut meta);
-
-    // both AssignmentDumper and generate_ccs_instance expects Vec of length 2^k
-    // so I need to fill the vec
-    let instance_option: Vec<Vec<Option<HALO2>>> = instance
-        .iter()
-        .map(|cells| {
-            let mut column = vec![None; 1 << k];
-            column[0..cells.len()]
-                .copy_from_slice(&cells.iter().map(|cell| Some(*cell)).collect::<Vec<_>>());
-            column
-        })
-        .collect();
-    let instance_value: Vec<Vec<Value<HALO2>>> = instance
-        .iter()
-        .map(|cells| {
-            let mut column = vec![Value::unknown(); 1 << k];
-            column[0..cells.len()].copy_from_slice(
-                &cells
-                    .iter()
-                    .map(|cell| Value::known(*cell))
-                    .collect::<Vec<_>>(),
-            );
-            column
-        })
-        .collect();
-
+    // This line reads meta.num_instance_columns
     let mut cell_dumper: AssignmentDumper<HALO2> = AssignmentDumper::new(k, &meta);
-    cell_dumper.instance = instance_value;
+
+    // instance_option has the same shape as cell_dumper.instance
+    let mut instance_option: Vec<Vec<Option<HALO2>>> = cell_dumper
+        .instance
+        .iter()
+        .map(|column| vec![None; column.len()])
+        .collect();
+
+    for (column_index, column) in instance.iter().enumerate() {
+        for (row_index, cell) in column.iter().enumerate() {
+            // Assign an instance cell
+            cell_dumper.instance[column_index][row_index] = Value::known(*cell);
+            // Value does not implement unwrap so I need to keep track of the assignments in Option...
+            instance_option[column_index][row_index] = Some(*cell);
+        }
+    }
+
     C::FloorPlanner::synthesize(&mut cell_dumper, circuit, config, meta.constants.clone())?;
 
     let instance_option: Vec<&[Option<HALO2>]> =
