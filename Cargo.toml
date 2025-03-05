@@ -8,7 +8,7 @@ resolver = "2"
 
 [dependencies]
 halo2_proofs = { git = "https://github.com/pnyda/halo2.git", rev = "bdc6f1cb47ff96bf0696fd585bebd6e7700c5736" }
-folding-schemes = { git = "https://github.com/privacy-scaling-explorations/sonobe.git" }
+folding-schemes = { git = "https://github.com/privacy-scaling-explorations/sonobe.git", rev = "31fbe72df30159804c06c662b749ca27ab90e11e" }
 ark-ff = { version = "0.5.0", default-features = false, features = ["parallel", "asm"] }
 ark-std = { version = "0.5.0" }
 ff = "0.13"
