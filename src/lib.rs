@@ -8,6 +8,7 @@ use halo2_proofs::dump::AssignmentDumper;
 use halo2_proofs::plonk;
 use halo2_proofs::plonk::*;
 use lookup::check_lookup_satisfiability;
+use plonkish_table::PlonkishTable;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Display;
@@ -20,6 +21,7 @@ use cell_mapping::*;
 mod ccs;
 mod lookup;
 use ccs::*;
+mod plonkish_table;
 
 // Basic flow of the Plonkish -> CCS+ conversion process in this code is
 // 1. Populate HashMap<AbsoluteCellPosition, CCSValue> with the assignments extracted from a Halo2 circuit
@@ -122,22 +124,24 @@ pub fn convert_halo2_circuit<
         }
     }
 
+    // This line updates cell_dumper
     C::FloorPlanner::synthesize(&mut cell_dumper, circuit, config, meta.constants.clone())?;
 
-    let instance_option: Vec<&[Option<HALO2>]> =
-        instance_option.iter().map(Vec::as_slice).collect();
-    let advice: Vec<&[Option<HALO2>]> = cell_dumper.advice.iter().map(Vec::as_slice).collect();
-    let fixed: Vec<&[Option<HALO2>]> = cell_dumper.fixed.iter().map(Vec::as_slice).collect();
-    let selectors: Vec<&[bool]> = cell_dumper.selectors.iter().map(Vec::as_slice).collect();
+    let mut plonkish_table = PlonkishTable::new(k as usize);
+    plonkish_table.fill_from_halo2(
+        &cell_dumper.selectors,
+        &cell_dumper.fixed,
+        &cell_dumper.advice,
+        &instance_option,
+    );
 
     let lookups = dump_lookups::<HALO2, C>()?;
     let lookup_inputs: Vec<Expression<HALO2>> =
         lookups.iter().map(|(input, _)| input).cloned().collect();
+    plonkish_table.evaluate_lookup_inputs(&lookup_inputs)?;
+
     let mut cell_mapping = generate_cell_mapping(
-        &instance_option,
-        &advice,
-        &fixed,
-        &selectors,
+        &plonkish_table,
         &cell_dumper.copy_constraints,
         &lookup_inputs,
     )?;
@@ -146,22 +150,13 @@ pub fn convert_halo2_circuit<
 
     let ccs_instance: CCS<ARKWORKS> =
         generate_ccs_instance(&custom_gates, &mut cell_mapping, &lookup_inputs)?;
-    let z: Vec<ARKWORKS> = generate_z(
-        &selectors,
-        &fixed,
-        &instance_option,
-        &advice,
-        &cell_mapping,
-        &lookup_inputs,
-    )?;
+    let z: Vec<ARKWORKS> = generate_z(&plonkish_table, &cell_mapping)?;
 
     // Generate fixed lookup tables.
     // In the original CCS paper, there was only one lookup table T.
     // However, this implementation supports multiple lookup tables.
     let mut tables: Vec<HashSet<ARKWORKS>> = Vec::new();
     for (_, table_expr) in lookups {
-        tables.push(HashSet::new());
-
         if let Expression::Fixed(query) = table_expr {
             // zcash/halo2 only allows table_expr to be Expression::Fixed
 
@@ -169,16 +164,12 @@ pub fn convert_halo2_circuit<
             // When you call assign_table only on some rows, and leave rest of the column unassigned, assign_table will automatically fill the rest of the column with duplicates of already assigned values.
             // This means that, we won't encounter unassigned None cell here, except the case where the user didn't call assign_table, not even once.
 
-            for cell in fixed[query.column_index] {
-                if let Some(cell) = cell {
-                    tables
-                        .last_mut()
-                        .unwrap()
-                        .insert(ARKWORKS::from_le_bytes_mod_order(&cell.to_repr()));
-                } else {
-                    return Err(Error::UnassignedLookupTable);
-                }
-            }
+            tables.push(
+                plonkish_table.fixed[query.column_index]
+                    .iter()
+                    .copied()
+                    .collect(),
+            );
         } else {
             // pse/halo2 lets table_expr to be something other than FixedQuery, but we're working on zcash/halo2.
             panic!("zcash/halo2 supports only fixed lookup tables.")

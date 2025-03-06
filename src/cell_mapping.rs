@@ -1,5 +1,6 @@
 use crate::query::AbsoluteCellPosition;
 use crate::Error;
+use crate::PlonkishTable;
 use crate::Query;
 use crate::VirtualColumnType;
 use halo2_proofs::dump::CopyConstraint;
@@ -19,20 +20,15 @@ pub(crate) fn generate_cell_mapping<
     HALO2: ff::PrimeField<Repr = [u8; 32]>,
     ARKWORKS: ark_ff::PrimeField,
 >(
-    // These have to have the shape [[cell assignment; number of rows]; number of columns]
-    // None means unassigned cell
-    instance: &[&[Option<HALO2>]],
-    advice: &[&[Option<HALO2>]],
-    fixed: &[&[Option<HALO2>]],
-    selectors: &[&[bool]],
+    plonkish_table: &PlonkishTable<ARKWORKS>,
     copy_constraints: &[CopyConstraint],
     lookup_inputs: &[Expression<HALO2>],
 ) -> Result<HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>>, Error> {
     let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>> = HashMap::new();
     let mut z_height = 1;
 
-    for (column_index, column) in instance.into_iter().enumerate() {
-        for (row_index, _) in column.into_iter().enumerate() {
+    for (column_index, column) in plonkish_table.instance.iter().enumerate() {
+        for (row_index, _) in column.iter().enumerate() {
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Instance,
                 column_index,
@@ -43,8 +39,8 @@ pub(crate) fn generate_cell_mapping<
         }
     }
 
-    for (column_index, column) in advice.into_iter().enumerate() {
-        for (row_index, _) in column.into_iter().enumerate() {
+    for (column_index, column) in plonkish_table.advice.iter().enumerate() {
+        for (row_index, _) in column.iter().enumerate() {
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Advice,
                 column_index,
@@ -55,30 +51,25 @@ pub(crate) fn generate_cell_mapping<
         }
     }
 
-    for (column_index, column) in fixed.into_iter().enumerate() {
-        for (row_index, cell) in column.into_iter().enumerate() {
-            // Here we initialize unassigned fixed cell with 0.
-            // This mimics Halo2's behavior.
-            // https://github.com/zcash/halo2/blob/fed6b000857f27e23ddb07454da8bde4697204f7/halo2_proofs/src/poly/domain.rs#L189
-            let value = ARKWORKS::from_le_bytes_mod_order(&cell.unwrap_or(0.into()).to_repr());
+    for (column_index, column) in plonkish_table.fixed.iter().enumerate() {
+        for (row_index, cell) in column.iter().enumerate() {
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Fixed,
                 column_index,
                 row_index,
             };
-            cell_mapping.insert(cell_position, CCSValue::InsideM(value));
+            cell_mapping.insert(cell_position, CCSValue::InsideM(*cell));
         }
     }
 
-    for (column_index, column) in selectors.into_iter().enumerate() {
-        for (row_index, cell) in column.into_iter().enumerate() {
-            let value = (*cell).into();
+    for (column_index, column) in plonkish_table.selector.iter().enumerate() {
+        for (row_index, cell) in column.iter().enumerate() {
             let cell_position = AbsoluteCellPosition {
                 column_type: VirtualColumnType::Selector,
                 column_index,
                 row_index,
             };
-            cell_mapping.insert(cell_position, CCSValue::InsideM(value));
+            cell_mapping.insert(cell_position, CCSValue::InsideM(*cell));
         }
     }
 
@@ -86,16 +77,8 @@ pub(crate) fn generate_cell_mapping<
     deduplicate_witness(&mut cell_mapping, copy_constraints);
 
     // Next, incorporate lookup constraints into the mapping.
-    let table_height = advice
-        .first()
-        .map(|column| column.len())
-        .or_else(|| instance.first().map(|column| column.len()))
-        .or_else(|| fixed.first().map(|column| column.len()))
-        .or_else(|| selectors.first().map(|column| column.len()))
-        .ok_or(Error::TableWidth0)?;
-
     for (lookup_index, lookup_input) in lookup_inputs.iter().enumerate() {
-        for y in 0..table_height {
+        for y in 0..plonkish_table.table_height() {
             let key = AbsoluteCellPosition {
                 column_type: VirtualColumnType::LookupInput,
                 column_index: lookup_index,
@@ -105,11 +88,11 @@ pub(crate) fn generate_cell_mapping<
                 // If the lookup input is just a query, we don't add new witness to Z.
                 // Instead we store in cell_mapping a reference to an existing entry in Z.
                 Expression::Advice(query) => cell_mapping
-                    .get(&Query::Advice(*query).cell_position(y, table_height))
+                    .get(&Query::Advice(*query).cell_position(y, plonkish_table.table_height()))
                     .copied()
                     .unwrap(),
                 Expression::Instance(query) => cell_mapping
-                    .get(&Query::Instance(*query).cell_position(y, table_height))
+                    .get(&Query::Instance(*query).cell_position(y, plonkish_table.table_height()))
                     .copied()
                     .unwrap(),
                 // If the lookup input is a complex Expression, we will create new witness

@@ -395,21 +395,10 @@ pub(crate) fn reduce_n<F: ark_ff::PrimeField>(
         .count();
 }
 
-pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_ff::PrimeField>(
-    selector: &[&[bool]],
-    fixed: &[&[Option<HALO2>]],
-    instance: &[&[Option<HALO2>]],
-    advice: &[&[Option<HALO2>]],
+pub(crate) fn generate_z<ARKWORKS: ark_ff::PrimeField>(
+    plonkish_table: &PlonkishTable<ARKWORKS>,
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>>,
-    lookup_inputs: &[Expression<HALO2>],
 ) -> Result<Vec<ARKWORKS>, Error> {
-    let table_height = advice
-        .first()
-        .map(|column| column.len())
-        .or_else(|| instance.first().map(|column| column.len()))
-        .or_else(|| fixed.first().map(|column| column.len()))
-        .or_else(|| selector.first().map(|column| column.len()))
-        .ok_or(Error::TableWidth0)?;
     let z_height = cell_mapping
         .values()
         .map(|ccs_value| match ccs_value {
@@ -425,60 +414,18 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
     let mut z: Vec<ARKWORKS> = vec![0.into(); z_height];
     z[0] = 1.into();
 
-    let mut cells: Vec<AbsoluteCellPosition> = cell_mapping.keys().copied().collect();
-    cells.sort();
-    cells.reverse();
+    let mut used_cells: Vec<AbsoluteCellPosition> = cell_mapping.keys().copied().collect();
+    used_cells.sort();
+    used_cells.reverse();
     // We need to sort and reverse here because
     // when an element in Z represents more than 2 cells in the original Plonkish table due to copy constraints
     // the value at AbsoluteCellPosition with less ordering should take precedence
 
-    for cell_position in cells.iter() {
-        let cell_value = match cell_position.column_type {
-            VirtualColumnType::Advice => {
-                advice[cell_position.column_index][cell_position.row_index]
-            }
-            VirtualColumnType::Instance => {
-                instance[cell_position.column_index][cell_position.row_index]
-            }
-            VirtualColumnType::LookupInput => lookup_inputs[cell_position.column_index].evaluate(
-                &|constant| Some(constant),
-                &|query: Selector| {
-                    if selector[query.0][cell_position.row_index] {
-                        Some(1.into())
-                    } else {
-                        Some(0.into())
-                    }
-                },
-                &|query: FixedQuery| {
-                    fixed[query.column_index][(cell_position.row_index as i32 + query.rotation.0)
-                        .rem_euclid(table_height as i32)
-                        as usize]
-                },
-                &|query: AdviceQuery| {
-                    advice[query.column_index][(cell_position.row_index as i32 + query.rotation.0)
-                        .rem_euclid(table_height as i32)
-                        as usize]
-                },
-                &|query: InstanceQuery| {
-                    instance[query.column_index][(cell_position.row_index as i32 + query.rotation.0)
-                        .rem_euclid(table_height as i32)
-                        as usize]
-                },
-                &|x| x.map(|x| -x),
-                &|lhs, rhs| lhs.and_then(|lhs| rhs.map(|rhs| lhs + rhs)),
-                &|lhs, rhs| lhs.and_then(|lhs| rhs.map(|rhs| lhs * rhs)),
-                &|lhs, constant| lhs.map(|lhs| lhs * constant),
-            ),
-            _ => continue,
-        };
-
+    for cell_position in used_cells.iter() {
         if let CCSValue::InsideZ(z_index) = cell_mapping.get(&cell_position).copied().unwrap() {
-            if let Some(cell_value) = cell_value {
-                z[z_index] = ARKWORKS::from_le_bytes_mod_order(&cell_value.to_repr());
-            } else {
-                // Check test_generate_z_corner_case to see why this is needed.
-                z[z_index] = 0.into();
-            }
+            z[z_index] = plonkish_table
+                .get(*cell_position)
+                .ok_or(plonk::Error::BoundsFailure)?;
         }
     }
 
