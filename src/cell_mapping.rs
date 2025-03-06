@@ -1,4 +1,5 @@
 use crate::query::AbsoluteCellPosition;
+use crate::Error;
 use crate::Query;
 use crate::VirtualColumnType;
 use halo2_proofs::dump::CopyConstraint;
@@ -26,7 +27,7 @@ pub(crate) fn generate_cell_mapping<
     selectors: &[&[bool]],
     copy_constraints: &[CopyConstraint],
     lookup_inputs: &[Expression<HALO2>],
-) -> HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>> {
+) -> Result<HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>>, Error> {
     let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>> = HashMap::new();
     let mut z_height = 1;
 
@@ -91,7 +92,7 @@ pub(crate) fn generate_cell_mapping<
         .or_else(|| instance.first().map(|column| column.len()))
         .or_else(|| fixed.first().map(|column| column.len()))
         .or_else(|| selectors.first().map(|column| column.len()))
-        .expect("The width of the Plonkish table is 0. Can't continue.");
+        .ok_or(Error::TableWidth0)?;
 
     for (lookup_index, lookup_input) in lookup_inputs.iter().enumerate() {
         for y in 0..table_height {
@@ -121,7 +122,7 @@ pub(crate) fn generate_cell_mapping<
         }
     }
 
-    cell_mapping
+    Ok(cell_mapping)
 }
 
 // Cells with greater ordering will get deduplicated into cells with less ordering.

@@ -50,12 +50,12 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
     custom_gates: &[Expression<HALO2>],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
     lookup_inputs: &[Expression<HALO2>],
-) -> CCS<F> {
+) -> Result<CCS<F>, Error> {
     let table_height = cell_mapping
         .keys()
         .map(|cell_position| cell_position.row_index + 1)
         .max()
-        .expect("Empty cell_mapping");
+        .ok_or(Error::TableHeight0)?;
     let num_instance_cells: usize = cell_mapping
         .keys()
         .map(|cell_position| {
@@ -73,8 +73,7 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
             CCSValue::InsideM(_) => 1,
         })
         .max()
-        .unwrap_or(1);
-    assert!(1 < z_height, "We're about to generate a CCS instance with no witnesses. There's no point in continuing the process.");
+        .ok_or(Error::NoWitness)?;
 
     let mut gates: Vec<Vec<Monomial<F>>> = custom_gates
         .iter()
@@ -149,7 +148,7 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
         }
     }
 
-    CCS {
+    Ok(CCS {
         m,
         n: z_height,
         l: num_instance_cells,
@@ -161,7 +160,7 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
         M,
         S,
         c,
-    }
+    })
 }
 
 pub(crate) fn generate_ccs_instance<
@@ -171,12 +170,12 @@ pub(crate) fn generate_ccs_instance<
     custom_gates: &[Expression<HALO2>],
     cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
     lookup_inputs: &[Expression<HALO2>],
-) -> CCS<F> {
-    let mut ccs = generate_naive_ccs_instance(custom_gates, cell_mapping, lookup_inputs);
+) -> Result<CCS<F>, Error> {
+    let mut ccs = generate_naive_ccs_instance(custom_gates, cell_mapping, lookup_inputs)?;
     reduce_d(&mut ccs);
     reduce_t(&mut ccs);
     reduce_n(&mut ccs, cell_mapping);
-    ccs
+    Ok(ccs)
 }
 
 // This function optimizes a CCS instance.
@@ -403,14 +402,14 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
     advice: &[&[Option<HALO2>]],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<ARKWORKS>>,
     lookup_inputs: &[Expression<HALO2>],
-) -> Vec<ARKWORKS> {
+) -> Result<Vec<ARKWORKS>, Error> {
     let table_height = advice
         .first()
         .map(|column| column.len())
         .or_else(|| instance.first().map(|column| column.len()))
         .or_else(|| fixed.first().map(|column| column.len()))
         .or_else(|| selector.first().map(|column| column.len()))
-        .expect("The width of the Plonkish table is 0. Can't continue.");
+        .ok_or(Error::TableWidth0)?;
     let z_height = cell_mapping
         .values()
         .map(|ccs_value| match ccs_value {
@@ -418,8 +417,7 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
             CCSValue::InsideM(_) => 1,
         })
         .max()
-        .unwrap_or(1);
-    assert!(1 < z_height, "We're about to generate a CCS instance with no witnesses. There's no point in continuing the process.");
+        .ok_or(Error::NoWitness)?;
 
     // Here we initialize unassigned cells in the original Plonkish table with 0.
     // This mimics Halo2's behavior.
@@ -484,7 +482,7 @@ pub(crate) fn generate_z<HALO2: ff::PrimeField<Repr = [u8; 32]>, ARKWORKS: ark_f
         }
     }
 
-    z
+    Ok(z)
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ use halo2_proofs::plonk::*;
 use lookup::check_lookup_satisfiability;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt::Display;
 
 mod query;
 use query::*;
@@ -33,6 +34,41 @@ use ccs::*;
 // But in the case of CCS+, these evaluation results has to be in Z, and we need to commit to it together with other columns.
 // Thus in this code I treat a lookup input evaluated at each row as if it's another column.
 // I later constrain these lookup input evaluation result columns according to the lookup input Expression, just like we constrain advice columns according to custom gate Expression.
+
+#[derive(Debug)]
+pub enum Error {
+    Halo2(plonk::Error),
+    NoWitness,
+    TableWidth0,
+    TableHeight0,
+    UnassignedLookupTable,
+}
+
+impl From<plonk::Error> for Error {
+    fn from(src: plonk::Error) -> Self {
+        Error::Halo2(src)
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Halo2(err) => err.fmt(f),
+            Self::NoWitness => {
+                f.write_str("We're about to generate a CCS instance with n<2. Can't continue.")
+            }
+            Self::TableWidth0 => {
+                f.write_str("The width of the Plonkish table is 0. Can't continue.")
+            }
+            Self::TableHeight0 => {
+                f.write_str("The height of the Plonkish table is 0. Can't continue.")
+            }
+            Self::UnassignedLookupTable => {
+                f.write_str("A fixed column used in lookup argument had an unassigned cell. This happens when the user forgot to call assign_table on the fixed column.")
+            }
+        }
+    }
+}
 
 /// Converts a Halo2 circuit into a sonobe CCS instance.
 ///
@@ -62,7 +98,7 @@ pub fn convert_halo2_circuit<
         Vec<(HashSet<usize>, HashSet<ARKWORKS>)>,
         HashMap<AbsoluteCellPosition, usize>,
     ),
-    plonk::Error,
+    Error,
 > {
     let mut meta = ConstraintSystem::<HALO2>::default();
     // This line updates meta.num_instance_columns
@@ -104,12 +140,12 @@ pub fn convert_halo2_circuit<
         &selectors,
         &cell_dumper.copy_constraints,
         &lookup_inputs,
-    );
+    )?;
 
     let custom_gates = dump_gates::<HALO2, C>()?;
 
     let ccs_instance: CCS<ARKWORKS> =
-        generate_ccs_instance(&custom_gates, &mut cell_mapping, &lookup_inputs);
+        generate_ccs_instance(&custom_gates, &mut cell_mapping, &lookup_inputs)?;
     let z: Vec<ARKWORKS> = generate_z(
         &selectors,
         &fixed,
@@ -117,31 +153,37 @@ pub fn convert_halo2_circuit<
         &advice,
         &cell_mapping,
         &lookup_inputs,
-    );
+    )?;
 
     // Generate fixed lookup tables.
     // In the original CCS paper, there was only one lookup table T.
     // However, this implementation supports multiple lookup tables.
-    let tables: Vec<HashSet<ARKWORKS>> = lookups
-        .iter()
-        .map(|(_, table_expr)| {
-            if let Expression::Fixed(query) = table_expr {
-                // Here we skip unassigned cells in fixed[query.column_index]. Why? When you call assign_table in Halo2, it fills unassigned cells in a lookup table with duplicates of the smallest assigned cell in the table.
-                // This is done by assign_table calling Assignment::fill_from_row.
-                // Since we are extracting cell assignments by implementing our own Assignment, we see here a bunch of duplicate cells I mentioned.
-                // That means, unassigned cells we see here are cells reserved for blinding factors.
-                // See zero-knowledge adjustments https://zcash.github.io/halo2/design/proving-system/lookup.html#zero-knowledge-adjustment
-                fixed[query.column_index]
-                    .iter()
-                    .filter_map(|cell| *cell)
-                    .map(|cell| ARKWORKS::from_le_bytes_mod_order(&cell.to_repr()))
-                    .collect()
-            } else {
-                // pse/halo2 lets table_expr to be something other than FixedQuery, but we're working on zcash/halo2.
-                panic!("zcash/halo2 supports only fixed lookup tables.")
+    let mut tables: Vec<HashSet<ARKWORKS>> = Vec::new();
+    for (_, table_expr) in lookups {
+        tables.push(HashSet::new());
+
+        if let Expression::Fixed(query) = table_expr {
+            // zcash/halo2 only allows table_expr to be Expression::Fixed
+
+            // In Halo2, you use assign_table to assign a value in a lookup table.
+            // When you call assign_table only on some rows, and leave rest of the column unassigned, assign_table will automatically fill the rest of the column with duplicates of already assigned values.
+            // This means that, we won't encounter unassigned None cell here, except the case where the user didn't call assign_table, not even once.
+
+            for cell in fixed[query.column_index] {
+                if let Some(cell) = cell {
+                    tables
+                        .last_mut()
+                        .unwrap()
+                        .insert(ARKWORKS::from_le_bytes_mod_order(&cell.to_repr()));
+                } else {
+                    return Err(Error::UnassignedLookupTable);
+                }
             }
-        })
-        .collect();
+        } else {
+            // pse/halo2 lets table_expr to be something other than FixedQuery, but we're working on zcash/halo2.
+            panic!("zcash/halo2 supports only fixed lookup tables.")
+        }
+    }
 
     // Generate multiple Ls.
     // In the original CCS paper, there was only one L.

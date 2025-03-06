@@ -15,8 +15,7 @@ use halo2_proofs::plonk::TableColumn;
 use halo2_proofs::poly::Rotation;
 use halo2ccs::{convert_halo2_circuit, is_ccs_plus_satisfied};
 
-// Tests for cases where the lookup input is a simple query
-// The code behaves differently depending on if the lookup input is complex or not so I need to test both cases
+//
 
 #[test]
 fn test_unassigned_lookup_table_success() -> Result<(), Error> {
@@ -93,13 +92,13 @@ impl Circuit<Fp> for Non0Circuit {
         config: Self::Config,
         mut layouter: impl Layouter<Fp>,
     ) -> Result<(), Error> {
-        let usable_rows = 249;
+        let fill_until = 200;
 
         // Fill all of the lookup table with some non-0 values.
         layouter.assign_table(
             || "non0 lookup table",
             |mut table| {
-                for i in 0..usable_rows {
+                for i in 0..fill_until {
                     table.assign_cell(
                         || "non0 cell",
                         config.table,
