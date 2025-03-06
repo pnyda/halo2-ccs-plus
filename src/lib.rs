@@ -41,9 +41,6 @@ mod plonkish_table;
 pub enum Error {
     Halo2(plonk::Error),
     NoWitness,
-    TableWidth0,
-    TableHeight0,
-    UnassignedLookupTable,
 }
 
 impl From<plonk::Error> for Error {
@@ -58,15 +55,6 @@ impl Display for Error {
             Self::Halo2(err) => err.fmt(f),
             Self::NoWitness => {
                 f.write_str("We're about to generate a CCS instance with n<2. Can't continue.")
-            }
-            Self::TableWidth0 => {
-                f.write_str("The width of the Plonkish table is 0. Can't continue.")
-            }
-            Self::TableHeight0 => {
-                f.write_str("The height of the Plonkish table is 0. Can't continue.")
-            }
-            Self::UnassignedLookupTable => {
-                f.write_str("A fixed column used in lookup argument had an unassigned cell. This happens when the user forgot to call assign_table on the fixed column.")
             }
         }
     }
@@ -127,7 +115,7 @@ pub fn convert_halo2_circuit<
     // This line updates cell_dumper
     C::FloorPlanner::synthesize(&mut cell_dumper, circuit, config, meta.constants.clone())?;
 
-    let mut plonkish_table = PlonkishTable::new(k as usize);
+    let mut plonkish_table = PlonkishTable::new(k as usize, cell_dumper.usable_rows.len());
     plonkish_table.fill_from_halo2(
         &cell_dumper.selectors,
         &cell_dumper.fixed,
@@ -148,8 +136,12 @@ pub fn convert_halo2_circuit<
 
     let custom_gates = dump_gates::<HALO2, C>()?;
 
-    let ccs_instance: CCS<ARKWORKS> =
-        generate_ccs_instance(&custom_gates, &mut cell_mapping, &lookup_inputs)?;
+    let ccs_instance: CCS<ARKWORKS> = generate_ccs_instance(
+        plonkish_table.k,
+        &custom_gates,
+        &mut cell_mapping,
+        &lookup_inputs,
+    )?;
     let z: Vec<ARKWORKS> = generate_z(&plonkish_table, &cell_mapping)?;
 
     // Generate fixed lookup tables.
@@ -167,6 +159,7 @@ pub fn convert_halo2_circuit<
             tables.push(
                 plonkish_table.fixed[query.column_index]
                     .iter()
+                    .take(plonkish_table.usable_rows)
                     .copied()
                     .collect(),
             );
@@ -191,6 +184,7 @@ pub fn convert_halo2_circuit<
                 .filter_map(|(position, value)| {
                     if position.column_type == VirtualColumnType::LookupInput
                         && position.column_index == lookup_index
+                        && position.row_index < plonkish_table.usable_rows
                     {
                         if let CCSValue::InsideZ(z_index) = value {
                             // This z_index is the o in the paper.

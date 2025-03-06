@@ -536,16 +536,17 @@ mod tests {
     #[cfg(test)]
     #[test]
     fn test_generate_cell_mapping() -> Result<(), Error> {
+        let k = 2;
         // Meaningless assignments
-        let instance = [[Some(Fp::from(5)), None, None, None]];
-        let advice = [[
+        let instance = vec![vec![Some(Fp::from(5)), None, None, None]];
+        let advice = vec![vec![
             Some(Fp::from(1)),
             Some(Fp::from(2)),
             Some(Fp::from(3)),
             Some(Fp::from(5)),
         ]];
-        let fixed = [[Some(Fp::from(1)), Some(Fp::from(2)), None, None]];
-        let selectors = [[true, true, true, false]];
+        let fixed = vec![vec![Some(Fp::from(1)), Some(Fp::from(2)), None, None]];
+        let selectors = vec![vec![true, true, true, false]];
         // Meaningless copy constraints
         let copy_constraints = [
             CopyConstraint {
@@ -777,14 +778,11 @@ mod tests {
             CCSValue::InsideZ(12),
         );
 
-        let actual = generate_cell_mapping(
-            &instance.each_ref().map(|x| &x[..]), // It feels weird that we have to do this manually
-            &advice.each_ref().map(|x| &x[..]),
-            &fixed.each_ref().map(|x| &x[..]),
-            &selectors.each_ref().map(|x| &x[..]),
-            &copy_constraints,
-            &lookup_inputs,
-        )?;
+        let mut plonkish_table = PlonkishTable::new(k, 1 << k);
+        plonkish_table.fill_from_halo2(&selectors, &fixed, &advice, &instance);
+        plonkish_table.evaluate_lookup_inputs(&lookup_inputs)?;
+
+        let actual = generate_cell_mapping(&plonkish_table, &copy_constraints, &lookup_inputs)?;
         assert_eq!(actual, expect);
         Ok(())
     }

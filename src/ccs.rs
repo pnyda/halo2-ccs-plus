@@ -12,11 +12,13 @@ use std::collections::HashSet;
 // Note that the output of this function does not go into a CCS instance directly,
 //   rather it goes through a bunch of transformation in the process.
 pub(crate) fn generate_mj<F: ark_ff::PrimeField>(
-    query: Query,
-    table_height: usize,
+    k: usize,
     z_height: usize,
+    query: Query,
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
 ) -> SparseMatrix<F> {
+    let table_height = 1 << k;
+
     let mut mj = SparseMatrix::empty();
     mj.n_cols = z_height;
     mj.n_rows = table_height;
@@ -47,15 +49,11 @@ pub(crate) fn generate_mj<F: ark_ff::PrimeField>(
 
 // Generate a CCS instance that works, but unoptimized.
 fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff::PrimeField>(
+    k: usize,
     custom_gates: &[Expression<HALO2>],
     cell_mapping: &HashMap<AbsoluteCellPosition, CCSValue<F>>,
     lookup_inputs: &[Expression<HALO2>],
 ) -> Result<CCS<F>, Error> {
-    let table_height = cell_mapping
-        .keys()
-        .map(|cell_position| cell_position.row_index + 1)
-        .max()
-        .ok_or(Error::TableHeight0)?;
     let num_instance_cells: usize = cell_mapping
         .keys()
         .map(|cell_position| {
@@ -103,6 +101,7 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
             }),
     );
 
+    let table_height = 1 << k;
     let m = gates.len() * table_height;
 
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
@@ -133,7 +132,7 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
                 // |010|
                 // |001|
 
-                let mut mj = generate_mj(*query, table_height, z_height, &cell_mapping);
+                let mut mj = generate_mj(k, z_height, *query, &cell_mapping);
                 mj.n_rows = m;
 
                 let y_offset = gate_index * table_height;
@@ -167,11 +166,12 @@ pub(crate) fn generate_ccs_instance<
     HALO2: ff::PrimeField<Repr = [u8; 32]>,
     F: ark_ff::PrimeField,
 >(
+    k: usize,
     custom_gates: &[Expression<HALO2>],
     cell_mapping: &mut HashMap<AbsoluteCellPosition, CCSValue<F>>,
     lookup_inputs: &[Expression<HALO2>],
 ) -> Result<CCS<F>, Error> {
-    let mut ccs = generate_naive_ccs_instance(custom_gates, cell_mapping, lookup_inputs)?;
+    let mut ccs = generate_naive_ccs_instance(k, custom_gates, cell_mapping, lookup_inputs)?;
     reduce_d(&mut ccs);
     reduce_t(&mut ccs);
     reduce_n(&mut ccs, cell_mapping);
@@ -446,7 +446,7 @@ mod tests {
             column_index: 0,
             rotation: Rotation(0),
         });
-        let table_height = 4;
+        let k = 2;
         let z_height = 5;
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
@@ -482,7 +482,7 @@ mod tests {
             CCSValue::InsideZ(4),
         );
 
-        let actual = generate_mj(query, table_height, z_height, &cell_mapping);
+        let actual = generate_mj(k, z_height, query, &cell_mapping);
         let expect: SparseMatrix<Fq> = dense_matrix_to_sparse(vec![
             vec![0.into(), 1.into(), 0.into(), 0.into(), 0.into()],
             vec![0.into(), 0.into(), 1.into(), 0.into(), 0.into()],
@@ -499,7 +499,7 @@ mod tests {
             column_index: 0,
             rotation: Rotation(1),
         });
-        let table_height = 4;
+        let k = 2;
         let z_height = 5;
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
@@ -535,7 +535,7 @@ mod tests {
             CCSValue::InsideZ(4),
         );
 
-        let actual = generate_mj(query, table_height, z_height, &cell_mapping);
+        let actual = generate_mj(k, z_height, query, &cell_mapping);
         let expect: SparseMatrix<Fq> = dense_matrix_to_sparse(vec![
             vec![0.into(), 0.into(), 1.into(), 0.into(), 0.into()],
             vec![0.into(), 0.into(), 0.into(), 1.into(), 0.into()],
@@ -552,7 +552,7 @@ mod tests {
             column_index: 0,
             rotation: Rotation(0),
         });
-        let table_height = 4;
+        let k = 2;
         let z_height = 5;
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
@@ -588,7 +588,7 @@ mod tests {
             CCSValue::InsideM(78.into()),
         );
 
-        let actual = generate_mj(query, table_height, z_height, &cell_mapping);
+        let actual = generate_mj(k, z_height, query, &cell_mapping);
         let expect: SparseMatrix<Fq> = dense_matrix_to_sparse(vec![
             vec![12.into(), 0.into(), 0.into(), 0.into(), 0.into()],
             vec![34.into(), 0.into(), 0.into(), 0.into(), 0.into()],
@@ -605,7 +605,7 @@ mod tests {
             column_index: 0,
             rotation: Rotation(-1),
         });
-        let table_height = 4;
+        let k = 2;
         let z_height = 5;
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
@@ -641,7 +641,7 @@ mod tests {
             CCSValue::InsideM(78.into()),
         );
 
-        let actual = generate_mj(query, table_height, z_height, &cell_mapping);
+        let actual = generate_mj(k, z_height, query, &cell_mapping);
         let expect: SparseMatrix<Fq> = dense_matrix_to_sparse(vec![
             vec![78.into(), 0.into(), 0.into(), 0.into(), 0.into()],
             vec![12.into(), 0.into(), 0.into(), 0.into(), 0.into()],
@@ -997,7 +997,7 @@ mod tests {
 
     #[test]
     fn test_generate_z() -> Result<(), Error> {
-        // k=1
+        let k = 1;
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
             AbsoluteCellPosition {
@@ -1075,19 +1075,16 @@ mod tests {
             rotation: Rotation::cur(),
         });
 
-        let selectors = [[]];
-        let fixed: [[Option<Fp>; 2]; 1] = [[Some(9.into()), Some(2.into())]];
-        let advice: [[Option<Fp>; 2]; 1] = [[Some(1.into()), Some(3.into())]];
-        let instance: [[Option<Fp>; 2]; 1] = [[Some(1.into()), Some(6.into())]];
+        let selectors = Vec::new();
+        let fixed: Vec<Vec<Option<Fp>>> = vec![vec![Some(9.into()), Some(2.into())]];
+        let advice: Vec<Vec<Option<Fp>>> = vec![vec![Some(1.into()), Some(3.into())]];
+        let instance: Vec<Vec<Option<Fp>>> = vec![vec![Some(1.into()), Some(6.into())]];
 
-        let actual = generate_z(
-            &selectors.each_ref().map(|x| &x[..]),
-            &fixed.each_ref().map(|x| &x[..]),
-            &instance.each_ref().map(|x| &x[..]),
-            &advice.each_ref().map(|x| &x[..]),
-            &cell_mapping,
-            &[lookup_input],
-        )?;
+        let mut plonkish_table = PlonkishTable::new(k, 1 << k);
+        plonkish_table.fill_from_halo2(&selectors, &fixed, &advice, &instance);
+        plonkish_table.evaluate_lookup_inputs(&[lookup_input])?;
+
+        let actual = generate_z(&plonkish_table, &cell_mapping)?;
         let expect: Vec<Fq> = vec![
             1.into(), // Z[0] is always 1
             1.into(), // instance[0]
@@ -1104,6 +1101,7 @@ mod tests {
 
     #[test]
     fn test_generate_z_corner_case() -> Result<(), Error> {
+        let k = 1;
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
             // cell A
@@ -1129,19 +1127,15 @@ mod tests {
         // so the value assigned at the cell A should decide the value assigned at Z[1].
 
         // but the cell A in the original table is unassigned.
-        let advice: [[Option<Fp>; 2]; 1] = [[None, Some(2.into())]];
+        let advice: Vec<Vec<Option<Fp>>> = vec![vec![None, Some(2.into())]];
         let selectors = Vec::new();
         let fixed = Vec::new();
         let instance = Vec::new();
 
-        let z = generate_z(
-            &selectors,
-            &fixed,
-            &instance,
-            &advice.each_ref().map(|x| &x[..]),
-            &cell_mapping,
-            &[],
-        )?;
+        let mut plonkish_table = PlonkishTable::new(k, 1 << k);
+        plonkish_table.fill_from_halo2(&selectors, &fixed, &advice, &instance);
+
+        let z = generate_z(&plonkish_table, &cell_mapping)?;
 
         // Halo 2 initializes Cell A with 0, so I think we should follow that behavior.
         // Maybe it doesn't matter
@@ -1192,7 +1186,7 @@ mod tests {
             }),
         ];
 
-        // k=1
+        let k = 1;
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
             AbsoluteCellPosition {
@@ -1259,7 +1253,7 @@ mod tests {
             CCSValue::InsideZ(6),
         );
 
-        let actual = generate_naive_ccs_instance(&custom_gates, &cell_mapping, &lookup_inputs)?;
+        let actual = generate_naive_ccs_instance(k, &custom_gates, &cell_mapping, &lookup_inputs)?;
         let expect: CCS<Fq> = CCS {
             m: 2 * 3, // The height of the Plonkish table * The number of gates
             n: 7,     // 1 + 2 columns whose height is 2 + 2 elements for evaluated lookup inputs

@@ -1,3 +1,4 @@
+use ark_std::rand::rngs::OsRng;
 use halo2_proofs::plonk;
 use halo2_proofs::plonk::AdviceQuery;
 use halo2_proofs::plonk::Expression;
@@ -9,8 +10,11 @@ use crate::AbsoluteCellPosition;
 use crate::VirtualColumnType;
 
 pub(crate) struct PlonkishTable<ARKWORKS: ark_ff::PrimeField> {
-    // Note that table_height might not equal the height of Vec
+    // Note that 2^k might equal usable_rows, might not equal usable_rows.
     pub(crate) k: usize,
+    // usable_rows = 2^k - num_blinding_factors - 1
+    // What are blinding factors? See https://zcash.github.io/halo2/design/proving-system/lookup.html#zero-knowledge-adjustment
+    pub(crate) usable_rows: usize,
     // selector[x][y] is ith selector column's value at row y
     pub(crate) selector: Vec<Vec<ARKWORKS>>,
     // fixed[x][y] is xth fixed column's value at row y
@@ -19,16 +23,14 @@ pub(crate) struct PlonkishTable<ARKWORKS: ark_ff::PrimeField> {
     pub(crate) advice: Vec<Vec<ARKWORKS>>,
     // instance[x][y] is xth instance column's value at row y
     pub(crate) instance: Vec<Vec<ARKWORKS>>,
-    // Note that the height of a column Vec might not equal table_height, due to blinding factors.
-    // column_vec.len() == table_height - num_blinding_factors - 1
-    // What is blinding factors? See https://zcash.github.io/halo2/design/proving-system/lookup.html#zero-knowledge-adjustment
     pub(crate) lookup_inputs: Vec<Vec<ARKWORKS>>,
 }
 
 impl<ARKWORKS: ark_ff::PrimeField> PlonkishTable<ARKWORKS> {
-    pub(crate) fn new(k: usize) -> Self {
+    pub(crate) fn new(k: usize, usable_rows: usize) -> Self {
         Self {
             k,
+            usable_rows,
             selector: Vec::new(),
             fixed: Vec::new(),
             advice: Vec::new(),
@@ -47,6 +49,7 @@ impl<ARKWORKS: ark_ff::PrimeField> PlonkishTable<ARKWORKS> {
         self.selector = selector
             .iter()
             .map(|column| {
+                assert!(column.len() == self.table_height());
                 column
                     .iter()
                     .map(|cell| if *cell { 1.into() } else { 0.into() })
@@ -56,6 +59,7 @@ impl<ARKWORKS: ark_ff::PrimeField> PlonkishTable<ARKWORKS> {
         self.fixed = fixed
             .iter()
             .map(|column| {
+                assert!(column.len() == self.table_height());
                 column
                     .iter()
                     .map(|opt| {
@@ -70,6 +74,7 @@ impl<ARKWORKS: ark_ff::PrimeField> PlonkishTable<ARKWORKS> {
         self.advice = advice
             .iter()
             .map(|column| {
+                assert!(column.len() == self.table_height());
                 column
                     .iter()
                     .map(|opt| {
@@ -84,6 +89,7 @@ impl<ARKWORKS: ark_ff::PrimeField> PlonkishTable<ARKWORKS> {
         self.instance = instance
             .iter()
             .map(|column| {
+                assert!(column.len() == self.table_height());
                 column
                     .iter()
                     .map(|opt| {
@@ -106,8 +112,8 @@ impl<ARKWORKS: ark_ff::PrimeField> PlonkishTable<ARKWORKS> {
         for lookup_input in lookup_inputs {
             self.lookup_inputs.push(Vec::new());
 
-            for y in 0..self.usable_rows()? {
-                // halo2::Expression::evaluate lets us evaluate a Expression.
+            for y in 0..self.table_height() {
+                // halo2::Expression::evaluate lets us evaluate an Expression.
                 // but lets us specify what to do when it encountered each enum variants
                 let evaluation: ARKWORKS = lookup_input.evaluate(
                     // Exrpession::Constant
@@ -143,7 +149,7 @@ impl<ARKWORKS: ark_ff::PrimeField> PlonkishTable<ARKWORKS> {
                             })
                             .ok_or(plonk::Error::BoundsFailure)
                     },
-                    // Expression::
+                    // Expression::Instance
                     &|query: InstanceQuery| {
                         self.instance
                             .get(query.column_index)
@@ -155,9 +161,13 @@ impl<ARKWORKS: ark_ff::PrimeField> PlonkishTable<ARKWORKS> {
                             })
                             .ok_or(plonk::Error::BoundsFailure)
                     },
+                    // negation
                     &|x| x.map(|x| -x),
+                    // addition
                     &|lhs, rhs| lhs.and_then(|lhs| rhs.map(|rhs| lhs + rhs)),
+                    // multiplication
                     &|lhs, rhs| lhs.and_then(|lhs| rhs.map(|rhs| lhs * rhs)),
+                    // multiply with a constant
                     &|lhs, constant| {
                         lhs.map(|lhs| lhs * ARKWORKS::from_le_bytes_mod_order(&constant.to_repr()))
                     },
@@ -168,18 +178,6 @@ impl<ARKWORKS: ark_ff::PrimeField> PlonkishTable<ARKWORKS> {
         }
 
         Ok(())
-    }
-
-    // returns table_height - num_blinding_factors - 1
-    // AssignmentDumper gives us Vec of length of table_height - num_blinding_factors - 1
-    pub(crate) fn usable_rows(&self) -> Result<usize, crate::Error> {
-        self.selector
-            .first()
-            .map(|column| column.len())
-            .or_else(|| self.fixed.first().map(|column| column.len()))
-            .or_else(|| self.advice.first().map(|column| column.len()))
-            .or_else(|| self.instance.first().map(|column| column.len()))
-            .ok_or(crate::Error::TableWidth0)
     }
 
     pub(crate) fn table_height(&self) -> usize {
