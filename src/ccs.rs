@@ -1049,7 +1049,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_z() {
+    fn test_generate_z() -> Result<(), Error> {
         // k=1
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
@@ -1133,14 +1133,14 @@ mod tests {
         let advice: [[Option<Fp>; 2]; 1] = [[Some(1.into()), Some(3.into())]];
         let instance: [[Option<Fp>; 2]; 1] = [[Some(1.into()), Some(6.into())]];
 
-        let actual: Vec<Fq> = generate_z(
+        let actual = generate_z(
             &selectors.each_ref().map(|x| &x[..]),
             &fixed.each_ref().map(|x| &x[..]),
             &instance.each_ref().map(|x| &x[..]),
             &advice.each_ref().map(|x| &x[..]),
             &cell_mapping,
             &[lookup_input],
-        );
+        )?;
         let expect: Vec<Fq> = vec![
             1.into(), // Z[0] is always 1
             1.into(), // instance[0]
@@ -1151,11 +1151,12 @@ mod tests {
             9.into(), // evaluated lookup input
         ];
 
-        assert_eq!(actual, expect)
+        assert_eq!(actual, expect);
+        Ok(())
     }
 
     #[test]
-    fn test_generate_z_corner_case() {
+    fn test_generate_z_corner_case() -> Result<(), Error> {
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
         cell_mapping.insert(
             // cell A
@@ -1193,15 +1194,16 @@ mod tests {
             &advice.each_ref().map(|x| &x[..]),
             &cell_mapping,
             &[],
-        );
+        )?;
 
         // Halo 2 initializes Cell A with 0, so I think we should follow that behavior.
         // Maybe it doesn't matter
         assert_eq!(z, vec![1.into(), 0.into()]);
+        Ok(())
     }
 
     #[test]
-    fn test_generate_naive_ccs_instance() {
+    fn test_generate_naive_ccs_instance() -> Result<(), Error> {
         // There are 2 custom gates.
         let custom_gates: [Expression<Fp>; 2] = [
             Expression::Instance(InstanceQuery {
@@ -1310,7 +1312,7 @@ mod tests {
             CCSValue::InsideZ(6),
         );
 
-        let actual = generate_naive_ccs_instance(&custom_gates, &cell_mapping, &lookup_inputs);
+        let actual = generate_naive_ccs_instance(&custom_gates, &cell_mapping, &lookup_inputs)?;
         let expect: CCS<Fq> = CCS {
             m: 2 * 3, // The height of the Plonkish table * The number of gates
             n: 7,     // 1 + 2 columns whose height is 2 + 2 elements for evaluated lookup inputs
@@ -1741,5 +1743,6 @@ mod tests {
         };
 
         assert_eq!(actual, expect);
+        Ok(())
     }
 }

@@ -10,10 +10,10 @@ use halo2_proofs::circuit::SimpleFloorPlanner;
 use halo2_proofs::circuit::Value;
 use halo2_proofs::dev::MockProver;
 use halo2_proofs::pasta::Fp;
+use halo2_proofs::plonk;
 use halo2_proofs::plonk::Circuit;
 use halo2_proofs::plonk::Column;
 use halo2_proofs::plonk::ConstraintSystem;
-use halo2_proofs::plonk::Error;
 use halo2_proofs::plonk::Instance;
 use halo2ccs::convert_halo2_circuit;
 use rayon::prelude::*;
@@ -22,7 +22,7 @@ use std::marker::PhantomData;
 // Tests against a complex circuit that has multiple custom gates + copy constraints + no lookup
 
 #[test]
-fn test_poseidon_success() -> Result<(), Error> {
+fn test_poseidon_success() -> Result<(), halo2ccs::Error> {
     let message = [Fp::random(OsRng), Fp::random(OsRng)];
     let output = halo2_gadgets::poseidon::primitives::Hash::<
         _,
@@ -48,7 +48,7 @@ fn test_poseidon_success() -> Result<(), Error> {
 }
 
 #[test]
-fn test_poseidon_fail() -> Result<(), Error> {
+fn test_poseidon_fail() -> Result<(), halo2ccs::Error> {
     let message = [Fp::random(OsRng), Fp::random(OsRng)];
     let output = 0.into();
 
@@ -68,7 +68,7 @@ fn test_poseidon_fail() -> Result<(), Error> {
 
 #[test]
 // It takes too much time to run. I wonder why. This circuit is not that big...
-fn test_poseidon_no_unconstrained_z() -> Result<(), Error> {
+fn test_poseidon_no_unconstrained_z() -> Result<(), halo2ccs::Error> {
     let message = [Fp::random(OsRng), Fp::random(OsRng)];
     let output = halo2_gadgets::poseidon::primitives::Hash::<
         _,
@@ -152,7 +152,7 @@ impl<S: Spec<Fp, WIDTH, RATE>, const WIDTH: usize, const RATE: usize, const L: u
         &self,
         config: Self::Config,
         mut layouter: impl Layouter<Fp>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), plonk::Error> {
         let chip = Pow5Chip::construct(config.pow5.clone());
 
         let message = layouter.assign_region(
@@ -168,7 +168,7 @@ impl<S: Spec<Fp, WIDTH, RATE>, const WIDTH: usize, const RATE: usize, const L: u
                     )
                 };
 
-                let message: Result<Vec<_>, Error> = (0..L).map(message_word).collect();
+                let message: Result<Vec<_>, plonk::Error> = (0..L).map(message_word).collect();
                 Ok(message?.try_into().unwrap())
             },
         )?;

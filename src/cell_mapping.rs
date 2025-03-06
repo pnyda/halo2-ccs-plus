@@ -552,7 +552,7 @@ mod tests {
 
     #[cfg(test)]
     #[test]
-    fn test_generate_cell_mapping() {
+    fn test_generate_cell_mapping() -> Result<(), Error> {
         // Meaningless assignments
         let instance = [[Some(Fp::from(5)), None, None, None]];
         let advice = [[
@@ -794,14 +794,15 @@ mod tests {
             CCSValue::InsideZ(12),
         );
 
-        let actual: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = generate_cell_mapping(
+        let actual = generate_cell_mapping(
             &instance.each_ref().map(|x| &x[..]), // It feels weird that we have to do this manually
             &advice.each_ref().map(|x| &x[..]),
             &fixed.each_ref().map(|x| &x[..]),
             &selectors.each_ref().map(|x| &x[..]),
             &copy_constraints,
             &lookup_inputs,
-        );
+        )?;
         assert_eq!(actual, expect);
+        Ok(())
     }
 }

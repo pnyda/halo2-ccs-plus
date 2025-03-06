@@ -4,11 +4,11 @@ use halo2_proofs::circuit::SimpleFloorPlanner;
 use halo2_proofs::circuit::Value;
 use halo2_proofs::dev::MockProver;
 use halo2_proofs::pasta::Fp;
+use halo2_proofs::plonk;
 use halo2_proofs::plonk::Advice;
 use halo2_proofs::plonk::Circuit;
 use halo2_proofs::plonk::Column;
 use halo2_proofs::plonk::ConstraintSystem;
-use halo2_proofs::plonk::Error;
 use halo2_proofs::plonk::Expression;
 use halo2_proofs::plonk::TableColumn;
 use halo2_proofs::poly::Rotation;
@@ -18,7 +18,7 @@ use halo2ccs::{convert_halo2_circuit, is_ccs_plus_satisfied};
 // The code behaves differently depending on if the lookup input is complex or not so I need to test both cases
 
 #[test]
-fn test_range_success() -> Result<(), Error> {
+fn test_range_success() -> Result<(), halo2ccs::Error> {
     let k = 9;
     let circuit = RangeCircuit {
         bytes: vec![1.into(), 2.into(), 3.into(), 255.into()],
@@ -34,7 +34,7 @@ fn test_range_success() -> Result<(), Error> {
 }
 
 #[test]
-fn test_range_failure() -> Result<(), Error> {
+fn test_range_failure() -> Result<(), halo2ccs::Error> {
     let k = 9;
     let circuit = RangeCircuit {
         bytes: vec![1.into(), 2.into(), 3.into(), 256.into()],
@@ -93,7 +93,7 @@ impl Circuit<Fp> for RangeCircuit {
         &self,
         config: Self::Config,
         mut layouter: impl Layouter<Fp>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), plonk::Error> {
         layouter.assign_region(
             || "aa",
             |mut region| {

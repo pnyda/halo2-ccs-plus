@@ -6,11 +6,11 @@ use halo2_proofs::circuit::Layouter;
 use halo2_proofs::circuit::SimpleFloorPlanner;
 use halo2_proofs::dev::MockProver;
 use halo2_proofs::pasta::Fp;
+use halo2_proofs::plonk;
 use halo2_proofs::plonk::Advice;
 use halo2_proofs::plonk::Circuit;
 use halo2_proofs::plonk::Column;
 use halo2_proofs::plonk::ConstraintSystem;
-use halo2_proofs::plonk::Error;
 use halo2_proofs::plonk::Instance;
 use halo2_proofs::plonk::Selector;
 use halo2_proofs::poly::Rotation;
@@ -21,7 +21,7 @@ use std::marker::PhantomData;
 // Tests against a simple circuit that has only one custom gate + copy constraints + no lookup
 
 #[test]
-fn test_fibonacci_success() -> Result<(), Error> {
+fn test_fibonacci_success() -> Result<(), halo2ccs::Error> {
     let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
 
     let k = 4;
@@ -36,7 +36,7 @@ fn test_fibonacci_success() -> Result<(), Error> {
 }
 
 #[test]
-fn test_fibonacci_fail() -> Result<(), Error> {
+fn test_fibonacci_fail() -> Result<(), halo2ccs::Error> {
     let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 54.into()];
 
     let k = 4;
@@ -51,7 +51,7 @@ fn test_fibonacci_fail() -> Result<(), Error> {
 }
 
 #[test]
-fn test_fibonacci_no_unconstrained_z() -> Result<(), Error> {
+fn test_fibonacci_no_unconstrained_z() -> Result<(), halo2ccs::Error> {
     let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
 
     let k = 4;
@@ -127,7 +127,7 @@ impl<F: Field> FibonacciChip<F> {
         &self,
         mut layouter: impl Layouter<F>,
         nrows: usize,
-    ) -> Result<AssignedCell<F, F>, Error> {
+    ) -> Result<AssignedCell<F, F>, plonk::Error> {
         layouter.assign_region(
             || "entire fibonacci table",
             |mut region| {
@@ -175,7 +175,7 @@ impl<F: Field> FibonacciChip<F> {
         mut layouter: impl Layouter<F>,
         cell: AssignedCell<F, F>,
         row: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<(), plonk::Error> {
         layouter.constrain_instance(cell.cell(), self.config.instance, row)
     }
 }
@@ -201,7 +201,7 @@ impl<F: Field> Circuit<F> for FibonacciCircuit<F> {
         &self,
         config: Self::Config,
         mut layouter: impl Layouter<F>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), plonk::Error> {
         let chip = FibonacciChip::construct(config);
 
         let out_cell = chip.assign(layouter.namespace(|| "entire table"), 10)?;

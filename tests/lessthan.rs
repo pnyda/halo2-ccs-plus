@@ -6,11 +6,11 @@ use halo2_proofs::circuit::SimpleFloorPlanner;
 use halo2_proofs::circuit::Value;
 use halo2_proofs::dev::MockProver;
 use halo2_proofs::pasta::Fp;
+use halo2_proofs::plonk;
 use halo2_proofs::plonk::Advice;
 use halo2_proofs::plonk::Circuit;
 use halo2_proofs::plonk::Column;
 use halo2_proofs::plonk::ConstraintSystem;
-use halo2_proofs::plonk::Error;
 use halo2_proofs::plonk::Expression;
 use halo2_proofs::plonk::Fixed;
 use halo2_proofs::plonk::TableColumn;
@@ -22,7 +22,7 @@ use rayon::prelude::*;
 // The code behaves differently depending on if the lookup input is complex or not so I need to test both cases
 
 #[test]
-fn test_less_than_success() -> Result<(), Error> {
+fn test_less_than_success() -> Result<(), halo2ccs::Error> {
     let k = 9;
     let circuit = LessThanCircuit {
         less_than_200: vec![1.into(), 2.into(), 3.into(), 199.into()],
@@ -38,7 +38,7 @@ fn test_less_than_success() -> Result<(), Error> {
 }
 
 #[test]
-fn test_less_than_failure() -> Result<(), Error> {
+fn test_less_than_failure() -> Result<(), halo2ccs::Error> {
     let k = 9;
     let circuit = LessThanCircuit {
         less_than_200: vec![1.into(), 2.into(), 3.into(), 200.into()],
@@ -54,7 +54,7 @@ fn test_less_than_failure() -> Result<(), Error> {
 }
 
 #[test]
-fn test_less_than_no_unconstrained_z() -> Result<(), Error> {
+fn test_less_than_no_unconstrained_z() -> Result<(), halo2ccs::Error> {
     let k = 9;
     let circuit = LessThanCircuit {
         less_than_200: vec![1.into(), 2.into(), 3.into(), 199.into()],
@@ -120,7 +120,7 @@ impl Circuit<Fp> for LessThanCircuit {
         &self,
         config: Self::Config,
         mut layouter: impl Layouter<Fp>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), plonk::Error> {
         layouter.assign_region(
             || "aa",
             |mut region| {
