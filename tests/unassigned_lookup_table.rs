@@ -5,10 +5,10 @@ use halo2_proofs::circuit::SimpleFloorPlanner;
 use halo2_proofs::circuit::Value;
 use halo2_proofs::dev::MockProver;
 use halo2_proofs::pasta::Fp;
+use halo2_proofs::plonk;
 use halo2_proofs::plonk::Circuit;
 use halo2_proofs::plonk::Column;
 use halo2_proofs::plonk::ConstraintSystem;
-use halo2_proofs::plonk::Error;
 use halo2_proofs::plonk::Expression;
 use halo2_proofs::plonk::Instance;
 use halo2_proofs::plonk::TableColumn;
@@ -18,7 +18,7 @@ use halo2ccs::{convert_halo2_circuit, is_ccs_plus_satisfied};
 //
 
 #[test]
-fn test_unassigned_lookup_table_success() -> Result<(), Error> {
+fn test_unassigned_lookup_table_success() -> Result<(), halo2ccs::Error> {
     let k = 8;
     let circuit = Non0Circuit();
     let instance: [Fp; 250] = [1.into(); 250];
@@ -33,7 +33,7 @@ fn test_unassigned_lookup_table_success() -> Result<(), Error> {
 }
 
 #[test]
-fn test_unassigned_lookup_table_fail() -> Result<(), Error> {
+fn test_unassigned_lookup_table_fail() -> Result<(), halo2ccs::Error> {
     let k = 8;
     let circuit = Non0Circuit();
     let instance: [Fp; 250] = [0.into(); 250];
@@ -91,7 +91,7 @@ impl Circuit<Fp> for Non0Circuit {
         &self,
         config: Self::Config,
         mut layouter: impl Layouter<Fp>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), plonk::Error> {
         let fill_until = 200;
 
         // Fill all of the lookup table with some non-0 values.
