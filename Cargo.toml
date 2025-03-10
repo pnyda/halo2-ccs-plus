@@ -2,7 +2,19 @@
 name = "halo2ccs"
 version = "0.1.0"
 edition = "2021"
+resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+halo2_proofs = { git = "https://github.com/pnyda/halo2.git", branch = "ccs" }
+folding-schemes = { git = "https://github.com/privacy-scaling-explorations/sonobe.git", rev = "31fbe72df30159804c06c662b749ca27ab90e11e" }
+ark-ff = { version = "0.5.0", default-features = false, features = ["parallel", "asm"] }
+ark-std = { version = "0.5.0" }
+ff = "0.13"
+ark-pallas = { version = "0.5.0" }
+halo2_gadgets = { git = "https://github.com/pnyda/halo2.git", branch = "ccs" }
+ark-poly = { version = "0.5.0" }
+
+[dev-dependencies]
+rayon = "1"
