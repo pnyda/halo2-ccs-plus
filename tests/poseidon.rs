@@ -67,7 +67,6 @@ fn test_poseidon_fail() -> Result<(), halo2ccs::Error> {
 }
 
 #[test]
-// It takes too much time to run. I wonder why. This circuit is not that big...
 fn test_poseidon_no_unconstrained_z() -> Result<(), halo2ccs::Error> {
     let message = [Fp::random(OsRng), Fp::random(OsRng)];
     let output = halo2_gadgets::poseidon::primitives::Hash::<
@@ -92,6 +91,37 @@ fn test_poseidon_no_unconstrained_z() -> Result<(), halo2ccs::Error> {
         !is_zero_vec(&ccs.eval_at_z(&z).unwrap())
     });
     assert!(no_unconstrained_z);
+
+    Ok(())
+}
+
+#[test]
+fn test_poseidon_no_meaningless_constraint() -> Result<(), halo2ccs::Error> {
+    let message = [Fp::random(OsRng), Fp::random(OsRng)];
+    let output = halo2_gadgets::poseidon::primitives::Hash::<
+        _,
+        OrchardNullifier,
+        ConstantLength<2>,
+        3,
+        2,
+    >::init()
+    .hash(message);
+
+    let k = 6;
+    let circuit = HashCircuit::<OrchardNullifier, 3, 2, 2> {
+        message: Value::known(message),
+        _spec: PhantomData,
+    };
+    let (ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
+
+    let does_meaningless_constraint_exist = (0..ccs.m).into_par_iter().any(|row_index| {
+        ccs.M.iter().all(|matrix| {
+            matrix.coeffs[row_index]
+                .iter()
+                .all(|(value, _position)| *value == 0.into())
+        })
+    });
+    assert!(!does_meaningless_constraint_exist);
 
     Ok(())
 }
