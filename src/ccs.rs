@@ -174,6 +174,7 @@ pub(crate) fn generate_ccs_instance<
     let mut ccs = generate_naive_ccs_instance(k, custom_gates, cell_mapping, lookup_inputs)?;
     reduce_d(&mut ccs);
     reduce_t(&mut ccs);
+    reduce_q(&mut ccs);
     reduce_n(&mut ccs, cell_mapping);
     reduce_m(&mut ccs);
     Ok(ccs)
@@ -420,6 +421,42 @@ pub(crate) fn reduce_m<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     }
 
     ccs.s = log2(ccs.m) as usize;
+}
+
+// When a CCS instance has 2 monomials with same variables, we should replace those with 1 monomial with coeffiecents summed up.
+pub(crate) fn reduce_q<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
+    for multiset in ccs.S.iter_mut() {
+        // We'll later check if 2 multisets are, but multisets are implemented as Vec in Sonobe.
+        // To make the comparison easier, we sort values in each multiset Vec, so that each multiset has one canonical representation in the memory.
+        multiset.sort();
+    }
+
+    // We might remove this index, so here we want to process from rightmost elements in the Vec.
+    for rightmost_monomial_index in (0..ccs.q).rev() {
+        let rightmost_monomial = &ccs.S[rightmost_monomial_index];
+        let leftmost_monomial_index = ccs
+            .S
+            .iter()
+            .position(|leftmost_monomial| leftmost_monomial == rightmost_monomial)
+            .unwrap();
+        // We can unwrap here safely because the value we're searching is guaranteed to be in ccs.S
+
+        // If ccs.S contained the same monomial twice
+        if leftmost_monomial_index != rightmost_monomial_index {
+            // We'll merge the monomial on the right into one on the left
+            let rightmost_monomial_coefficient = ccs.c.remove(rightmost_monomial_index);
+            ccs.c[leftmost_monomial_index] += rightmost_monomial_coefficient;
+            ccs.S.remove(rightmost_monomial_index);
+        }
+    }
+
+    ccs.q = ccs.S.len();
+    ccs.d = ccs
+        .S
+        .iter()
+        .map(|multiset| multiset.len())
+        .max()
+        .unwrap_or(1);
 }
 
 pub(crate) fn generate_z<ARKWORKS: ark_ff::PrimeField>(
