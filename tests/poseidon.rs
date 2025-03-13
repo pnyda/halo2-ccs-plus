@@ -126,6 +126,44 @@ fn test_poseidon_no_meaningless_constraint() -> Result<(), halo2ccs::Error> {
     Ok(())
 }
 
+#[test]
+fn test_poseidon_no_empty_matrix() -> Result<(), halo2ccs::Error> {
+    let message = [Fp::random(OsRng), Fp::random(OsRng)];
+    let output = halo2_gadgets::poseidon::primitives::Hash::<
+        _,
+        OrchardNullifier,
+        ConstantLength<2>,
+        3,
+        2,
+    >::init()
+    .hash(message);
+
+    let k = 6;
+    let circuit = HashCircuit::<OrchardNullifier, 3, 2, 2> {
+        message: Value::known(message),
+        _spec: PhantomData,
+    };
+    let (ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
+
+    let num_empty_matrices = ccs
+        .M
+        .into_par_iter()
+        .filter(|matrix| {
+            matrix
+                .coeffs
+                .iter()
+                .all(|row| row.iter().all(|(value, _position)| *value == 0.into()))
+        })
+        .count();
+    assert!(
+        0 >= num_empty_matrices,
+        "num_empty_matrices: {}",
+        num_empty_matrices
+    );
+
+    Ok(())
+}
+
 #[derive(Clone)]
 struct HashConfig<const WIDTH: usize, const RATE: usize> {
     pow5: Pow5Config<Fp, WIDTH, RATE>,
