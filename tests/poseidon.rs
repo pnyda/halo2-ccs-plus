@@ -164,6 +164,42 @@ fn test_poseidon_no_empty_matrix() -> Result<(), halo2ccs::Error> {
     Ok(())
 }
 
+#[test]
+#[allow(non_snake_case)]
+fn test_poseidon_no_duplicate_S() -> Result<(), halo2ccs::Error> {
+    let message = [Fp::random(OsRng), Fp::random(OsRng)];
+    let output = halo2_gadgets::poseidon::primitives::Hash::<
+        _,
+        OrchardNullifier,
+        ConstantLength<2>,
+        3,
+        2,
+    >::init()
+    .hash(message);
+
+    let k = 6;
+    let circuit = HashCircuit::<OrchardNullifier, 3, 2, 2> {
+        message: Value::known(message),
+        _spec: PhantomData,
+    };
+    let (mut ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&[output]])?;
+
+    for multiset in ccs.S.iter_mut() {
+        multiset.sort();
+    }
+    ccs.S.sort();
+
+    let is_there_duplicate_S = ccs
+        .S
+        .iter()
+        .skip(1)
+        .zip(ccs.S.iter())
+        .any(|(next, prev)| prev == next);
+    assert!(!is_there_duplicate_S);
+
+    Ok(())
+}
+
 #[derive(Clone)]
 struct HashConfig<const WIDTH: usize, const RATE: usize> {
     pow5: Pow5Config<Fp, WIDTH, RATE>,
