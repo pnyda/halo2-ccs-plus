@@ -390,6 +390,7 @@ pub(crate) fn reduce_n<F: ark_ff::PrimeField>(
     }
 
     ccs.n = used_z.len();
+    ccs.s_prime = log2(ccs.n) as usize;
     ccs.l -= unconstrained_cells
         .into_iter()
         .filter(|cell| cell.column_type == VirtualColumnType::Instance)
@@ -1014,6 +1015,7 @@ mod tests {
                 ]),
             ],
             n: 3,
+            s_prime: 2,
             l: 1,
             ..ccs
         };
