@@ -175,6 +175,7 @@ pub(crate) fn generate_ccs_instance<
     reduce_d(&mut ccs);
     reduce_t(&mut ccs);
     reduce_n(&mut ccs, cell_mapping);
+    reduce_m(&mut ccs);
     Ok(ccs)
 }
 
@@ -393,6 +394,31 @@ pub(crate) fn reduce_n<F: ark_ff::PrimeField>(
         .into_iter()
         .filter(|cell| cell.column_type == VirtualColumnType::Instance)
         .count();
+}
+
+// If ith row of all M matrices happened to be a 0 vector, we can remove that row entirely.
+pub(crate) fn reduce_m<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
+    let mut row_index = 0;
+    while row_index < ccs.m {
+        let is_this_row_unused = ccs.M.iter().all(|matrix| {
+            matrix.coeffs[row_index]
+                .iter()
+                .all(|(value, _position)| *value == 0.into())
+        });
+
+        if is_this_row_unused {
+            ccs.m -= 1;
+
+            for matrix in ccs.M.iter_mut() {
+                matrix.n_rows -= 1;
+                matrix.coeffs.remove(row_index);
+            }
+        } else {
+            row_index += 1;
+        }
+    }
+
+    ccs.s = log2(ccs.m) as usize;
 }
 
 pub(crate) fn generate_z<ARKWORKS: ark_ff::PrimeField>(
@@ -989,6 +1015,61 @@ mod tests {
             ],
             n: 3,
             l: 1,
+            ..ccs
+        };
+
+        assert_eq!(actual, expect);
+    }
+
+    #[test]
+    fn test_reduce_m() {
+        let ccs: CCS<Fq> = CCS {
+            M: vec![
+                dense_matrix_to_sparse(vec![
+                    vec![0.into(), 0.into(), 1.into()],
+                    vec![0.into(), 0.into(), 0.into()],
+                    vec![0.into(), 2.into(), 0.into()],
+                    vec![0.into(), 0.into(), 0.into()],
+                    vec![3.into(), 0.into(), 0.into()],
+                ]),
+                dense_matrix_to_sparse(vec![
+                    vec![0.into(), 2.into(), 0.into()],
+                    vec![0.into(), 0.into(), 0.into()],
+                    vec![0.into(), 0.into(), 1.into()],
+                    vec![0.into(), 0.into(), 0.into()],
+                    vec![4.into(), 0.into(), 0.into()],
+                ]),
+            ],
+            n: 3,
+            l: 1,
+            m: 5,
+            t: 2,
+            q: 1,
+            d: 2,
+            s: 3,
+            s_prime: 2,
+            c: vec![1.into()],
+            S: vec![vec![0, 1]],
+        };
+
+        let mut actual = ccs.clone();
+        reduce_m(&mut actual);
+
+        let expect = CCS {
+            M: vec![
+                dense_matrix_to_sparse(vec![
+                    vec![0.into(), 0.into(), 1.into()],
+                    vec![0.into(), 2.into(), 0.into()],
+                    vec![3.into(), 0.into(), 0.into()],
+                ]),
+                dense_matrix_to_sparse(vec![
+                    vec![0.into(), 2.into(), 0.into()],
+                    vec![0.into(), 0.into(), 1.into()],
+                    vec![4.into(), 0.into(), 0.into()],
+                ]),
+            ],
+            s: 2,
+            m: 3,
             ..ccs
         };
 
