@@ -314,7 +314,15 @@ pub(crate) fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
 
         for index in monomial {
             let mj = &ccs.M[*index];
-            if let Some(j) = M.iter().position(|existing| mj == existing) {
+            let is_mj_empty = mj
+                .coeffs
+                .iter()
+                .all(|row| row.iter().all(|(value, _position)| *value == 0.into()));
+
+            if is_mj_empty {
+                // reduce_d might create a matrix of which elements are all 0. We skip these matrices.
+                continue;
+            } else if let Some(j) = M.iter().position(|existing| mj == existing) {
                 // If the matrix is already in M, we'll reuse the matrix.
                 S.last_mut().unwrap().push(j);
             } else {
@@ -323,10 +331,17 @@ pub(crate) fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
                 M.push(mj.clone());
             }
         }
+
+        // is_mj_empty might cause this condition
+        if 0 >= S.last().unwrap().len() {
+            S.pop().unwrap();
+        }
     }
 
     ccs.t = M.len();
     ccs.M = M;
+    ccs.q = S.len();
+    ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(1);
     ccs.S = S;
 }
 
