@@ -68,6 +68,78 @@ fn test_fibonacci_no_unconstrained_z() -> Result<(), halo2ccs::Error> {
     Ok(())
 }
 
+#[test]
+fn test_fibonacci_no_meaningless_constraint() -> Result<(), halo2ccs::Error> {
+    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+    let k = 4;
+    let circuit = FibonacciCircuit(PhantomData);
+    let (ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
+
+    let does_meaningless_constraint_exist = (0..ccs.m).into_par_iter().any(|row_index| {
+        ccs.M.iter().all(|matrix| {
+            matrix.coeffs[row_index]
+                .iter()
+                .all(|(value, _position)| *value == 0.into())
+        })
+    });
+    assert!(!does_meaningless_constraint_exist);
+
+    Ok(())
+}
+
+#[test]
+fn test_fibonacci_no_empty_matrix() -> Result<(), halo2ccs::Error> {
+    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+    let k = 4;
+    let circuit = FibonacciCircuit(PhantomData);
+    let (ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
+
+    let num_empty_matrices = ccs
+        .M
+        .into_par_iter()
+        .filter(|matrix| {
+            matrix
+                .coeffs
+                .iter()
+                .all(|row| row.iter().all(|(value, _position)| *value == 0.into()))
+        })
+        .count();
+    assert!(
+        0 >= num_empty_matrices,
+        "num_empty_matrices: {}",
+        num_empty_matrices
+    );
+
+    Ok(())
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_fibonacci_no_duplicate_S() -> Result<(), halo2ccs::Error> {
+    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+    let k = 4;
+    let circuit = FibonacciCircuit(PhantomData);
+    let (mut ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
+
+    for multiset in ccs.S.iter_mut() {
+        multiset.sort();
+    }
+    ccs.S.sort();
+
+    let is_there_duplicate_S = ccs
+        .S
+        .iter()
+        .skip(1)
+        .zip(ccs.S.iter())
+        .any(|(next, prev)| prev == next);
+    assert!(!is_there_duplicate_S);
+
+    Ok(())
+}
+
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
 #[derive(Debug, Clone)]
