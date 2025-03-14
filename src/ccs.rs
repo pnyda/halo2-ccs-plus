@@ -927,27 +927,61 @@ mod tests {
         m2.coeffs.push(vec![(1.into(), 0)]);
         m2.coeffs.push(vec![]);
 
+        // m0 == m1 == m2.
+        // those 3 must be deduplicated.
+
+        let m3 = dense_matrix_to_sparse(vec![
+            vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+        ]);
+
+        let mut m4 = SparseMatrix::empty();
+        m4.n_cols = 5;
+        m4.n_rows = 2;
+        m4.coeffs.push(vec![(0.into(), 0)]);
+        m4.coeffs.push(vec![(0.into(), 1)]);
+
+        let mut m5 = SparseMatrix::empty();
+        m5.n_cols = 5;
+        m5.n_rows = 2;
+        m5.coeffs.push(vec![]);
+        m5.coeffs.push(vec![]);
+
+        // m3 == m4 == m5
+        // those 3 must be removed, because it's an empty matrix.
+
         let subject: CCS<Fq> = CCS {
             m: 2,
             n: 5,
             l: 2,
-            t: 3,
-            q: 1,
-            d: 3,
+            t: 6,
+            q: 3,
+            d: 6,
             s: 2,
             s_prime: 3,
-            c: vec![1.into()],
-            S: vec![vec![0, 1, 2]],
-            M: vec![m0.clone(), m1.clone(), m2.clone()],
+            c: vec![1.into(), 2.into(), 3.into()],
+            S: vec![vec![3, 4, 5], vec![0, 1, 2], vec![0, 1, 2, 3, 4, 5]],
+            //      ^will be gone  ^stays         ^will be gone
+            M: vec![
+                m0.clone(),
+                m1.clone(),
+                m2.clone(),
+                m3.clone(),
+                m4.clone(),
+                m5.clone(),
+            ],
         };
 
         let mut actual = subject.clone();
         reduce_t(&mut actual);
 
         let expect = CCS {
+            c: vec![2.into()],
             S: vec![vec![0, 0, 0]],
             M: vec![m0.clone()],
             t: 1,
+            d: 3,
+            q: 1,
             ..subject
         };
 
