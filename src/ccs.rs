@@ -308,21 +308,27 @@ pub(crate) fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
 
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
+    let mut c: Vec<F> = Vec::new();
 
-    for monomial in ccs.S.iter() {
+    for (coefficient, monomial) in ccs.c.iter().zip(ccs.S.iter()) {
+        let does_monomial_contain_empty_matrix = monomial.iter().any(|j| {
+            ccs.M[*j]
+                .coeffs
+                .iter()
+                .all(|row| row.iter().all(|(value, _position)| *value == 0.into()))
+        });
+
+        if does_monomial_contain_empty_matrix {
+            continue;
+        }
+
         S.push(Vec::new());
+        c.push(*coefficient);
 
         for index in monomial {
             let mj = &ccs.M[*index];
-            let is_mj_empty = mj
-                .coeffs
-                .iter()
-                .all(|row| row.iter().all(|(value, _position)| *value == 0.into()));
 
-            if is_mj_empty {
-                // reduce_d might create a matrix of which elements are all 0. We skip these matrices.
-                continue;
-            } else if let Some(j) = M.iter().position(|existing| mj == existing) {
+            if let Some(j) = M.iter().position(|existing| mj == existing) {
                 // If the matrix is already in M, we'll reuse the matrix.
                 S.last_mut().unwrap().push(j);
             } else {
@@ -332,9 +338,10 @@ pub(crate) fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
             }
         }
 
-        // is_mj_empty might cause this condition
+        // Empty monomial must not exist
         if 0 >= S.last().unwrap().len() {
             S.pop().unwrap();
+            c.pop().unwrap();
         }
     }
 
@@ -343,6 +350,7 @@ pub(crate) fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     ccs.q = S.len();
     ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(1);
     ccs.S = S;
+    ccs.c = c;
 }
 
 // This function optimizes a CCS instance.
