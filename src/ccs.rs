@@ -1131,6 +1131,39 @@ mod tests {
     }
 
     #[test]
+    fn test_reduce_q() {
+        let ccs: CCS<Fq> = CCS {
+            M: vec![
+                dense_matrix_to_sparse(vec![vec![0.into(), 1.into()]]),
+                dense_matrix_to_sparse(vec![vec![1.into(), 0.into()]]),
+            ],
+            n: 2,
+            l: 0,
+            m: 1,
+            t: 2,
+            q: 5,
+            d: 2,
+            s: 0,
+            s_prime: 1,
+            c: vec![1.into(), 2.into(), 3.into(), 4.into(), 5.into()],
+            S: vec![vec![1], vec![0, 1], vec![0], vec![1, 0], vec![1]],
+        };
+
+        let mut actual = ccs.clone();
+        reduce_q(&mut actual);
+
+        let expect = CCS {
+            q: 3,
+            d: 2,
+            c: vec![6.into(), 6.into(), 3.into()],
+            S: vec![vec![1], vec![0, 1], vec![0]],
+            ..ccs
+        };
+
+        assert_eq!(actual, expect);
+    }
+
+    #[test]
     fn test_generate_z() -> Result<(), Error> {
         let k = 1;
         let mut cell_mapping: HashMap<AbsoluteCellPosition, CCSValue<Fq>> = HashMap::new();
