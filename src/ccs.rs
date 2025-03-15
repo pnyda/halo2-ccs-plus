@@ -449,7 +449,7 @@ pub(crate) fn reduce_m<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
 // When a CCS instance has 2 monomials with same variables, we should replace those with 1 monomial with coeffiecents summed up.
 pub(crate) fn reduce_q<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     for multiset in ccs.S.iter_mut() {
-        // We'll later check if 2 multisets are, but multisets are implemented as Vec in Sonobe.
+        // We'll later check if 2 multisets are equal, but multisets are implemented as Vec in Sonobe.
         // To make the comparison easier, we sort values in each multiset Vec, so that each multiset has one canonical representation in the memory.
         multiset.sort();
     }

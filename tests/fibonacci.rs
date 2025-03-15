@@ -140,6 +140,38 @@ fn test_fibonacci_no_duplicate_S() -> Result<(), halo2ccs::Error> {
     Ok(())
 }
 
+#[test]
+#[allow(non_snake_case)]
+fn test_fibonacci_no_duplicate_M() -> Result<(), halo2ccs::Error> {
+    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+    let k = 4;
+    let circuit = FibonacciCircuit(PhantomData);
+    let (mut ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
+
+    // There are 2 ways an element at (x,y) in a SparseMatrix can be 0
+    // 1. SparseMatrix.coeffs[y] contains (0, x)
+    // 2. SparseMatrix.coeffs[y] does not contain (0, x), but (non-0, x) doesn't exist either, so it's implied that the element at (x,y) is 0
+    // Thus the same SparseMatrix can take many forms on the memory.
+    // It's cumbersome to handle 2 cases so here we sanitize SparseMatrix, into the case 2.
+    for mj in ccs.M.iter_mut() {
+        for row in mj.coeffs.iter_mut() {
+            row.retain(|elem| elem.0 != 0.into());
+        }
+    }
+
+    for (rightmost_matrix_index, rightmost) in ccs.M.iter().enumerate().rev() {
+        let leftmost_matrix_index = ccs
+            .M
+            .iter()
+            .position(|leftmost| leftmost == rightmost)
+            .unwrap();
+        assert!(leftmost_matrix_index == rightmost_matrix_index);
+    }
+
+    Ok(())
+}
+
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
 #[derive(Debug, Clone)]
