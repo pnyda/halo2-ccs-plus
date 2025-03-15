@@ -23,6 +23,9 @@ mod lookup;
 use ccs::*;
 mod plonkish_table;
 
+pub use query::AbsoluteCellPosition;
+pub use query::VirtualColumnType;
+
 // Basic flow of the Plonkish -> CCS+ conversion process in this code is
 // 1. Populate HashMap<AbsoluteCellPosition, CCSValue> with the assignments extracted from a Halo2 circuit
 // 2. Modify the HashMap according to copy constraints
