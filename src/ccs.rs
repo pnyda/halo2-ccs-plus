@@ -142,7 +142,6 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
 
                 S.last_mut().unwrap().push(M.len());
                 M.push(mj);
-                // M matrix exists for each (gate, query) combination.
             }
         }
     }
@@ -153,7 +152,7 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
         l: num_instance_cells,
         t: M.len(),
         q: S.len(),
-        d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(1),
+        d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(0),
         s: log2(m) as usize,
         s_prime: log2(z_height) as usize,
         M,
@@ -287,7 +286,7 @@ pub(crate) fn reduce_d<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     }
 
     ccs.t = M.len();
-    ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(1);
+    ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(0);
     ccs.M = M;
     ccs.S = S;
 }
@@ -348,7 +347,7 @@ pub(crate) fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     ccs.t = M.len();
     ccs.M = M;
     ccs.q = S.len();
-    ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(1);
+    ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(0);
     ccs.S = S;
     ccs.c = c;
 }
@@ -479,7 +478,7 @@ pub(crate) fn reduce_q<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
         .iter()
         .map(|multiset| multiset.len())
         .max()
-        .unwrap_or(1);
+        .unwrap_or(0);
 }
 
 pub(crate) fn generate_z<ARKWORKS: ark_ff::PrimeField>(
