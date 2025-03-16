@@ -11,6 +11,8 @@ use std::hash::Hash;
 //   the former will get deduplicated into the latter.
 // If there was a copy constraint between an advice cell and a fixed cell,
 //   the former will get deduplicated into the latter.
+
+/// Column type. Basically halo2_proofs::plonk::Any but with some variants added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum VirtualColumnType {
     LookupInput,
@@ -38,11 +40,16 @@ impl From<Any> for VirtualColumnType {
 // if we had 0 instance column and 2 advice column, first column_index is 0, second column_index is 1.
 
 // This feels unintuitive but Halo2's internal works that way so I didn't bother to change it.
+
+/// Cell position in a Plonkish table.
+/// column_index will be assigned for each column_type, starting from 0.
+/// For example if we had 1 instance column and 1 advice column, column_index of both will be 0.
+/// if we had 0 instance column and 2 advice column, first column_index is 0, second column_index is 1.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct AbsoluteCellPosition {
-    pub(crate) column_type: VirtualColumnType,
-    pub(crate) column_index: usize,
-    pub(crate) row_index: usize,
+    pub column_type: VirtualColumnType,
+    pub column_index: usize,
+    pub row_index: usize,
 }
 
 // I use this Ord impl for witness deduplication.

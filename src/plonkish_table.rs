@@ -1,4 +1,3 @@
-use ark_std::rand::rngs::OsRng;
 use halo2_proofs::plonk;
 use halo2_proofs::plonk::AdviceQuery;
 use halo2_proofs::plonk::Expression;

@@ -68,6 +68,110 @@ fn test_fibonacci_no_unconstrained_z() -> Result<(), halo2ccs::Error> {
     Ok(())
 }
 
+#[test]
+fn test_fibonacci_no_meaningless_constraint() -> Result<(), halo2ccs::Error> {
+    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+    let k = 4;
+    let circuit = FibonacciCircuit(PhantomData);
+    let (ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
+
+    let does_meaningless_constraint_exist = (0..ccs.m).into_par_iter().any(|row_index| {
+        ccs.M.iter().all(|matrix| {
+            matrix.coeffs[row_index]
+                .iter()
+                .all(|(value, _position)| *value == 0.into())
+        })
+    });
+    assert!(!does_meaningless_constraint_exist);
+
+    Ok(())
+}
+
+#[test]
+fn test_fibonacci_no_empty_matrix() -> Result<(), halo2ccs::Error> {
+    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+    let k = 4;
+    let circuit = FibonacciCircuit(PhantomData);
+    let (ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
+
+    let num_empty_matrices = ccs
+        .M
+        .into_par_iter()
+        .filter(|matrix| {
+            matrix
+                .coeffs
+                .iter()
+                .all(|row| row.iter().all(|(value, _position)| *value == 0.into()))
+        })
+        .count();
+    assert!(
+        0 >= num_empty_matrices,
+        "num_empty_matrices: {}",
+        num_empty_matrices
+    );
+
+    Ok(())
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_fibonacci_no_duplicate_S() -> Result<(), halo2ccs::Error> {
+    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+    let k = 4;
+    let circuit = FibonacciCircuit(PhantomData);
+    let (mut ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
+
+    for multiset in ccs.S.iter_mut() {
+        multiset.sort();
+    }
+    ccs.S.sort();
+
+    let is_there_duplicate_S = ccs
+        .S
+        .iter()
+        .skip(1)
+        .zip(ccs.S.iter())
+        .any(|(next, prev)| prev == next);
+    assert!(!is_there_duplicate_S);
+
+    Ok(())
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_fibonacci_no_duplicate_M() -> Result<(), halo2ccs::Error> {
+    let instance_column: Vec<Fp> = vec![1.into(), 1.into(), 55.into()];
+
+    let k = 4;
+    let circuit = FibonacciCircuit(PhantomData);
+    let (mut ccs, _z, _, _) = convert_halo2_circuit::<_, _, Fq>(k, &circuit, &[&instance_column])?;
+
+    // There are 2 ways an element at (x,y) in a SparseMatrix can be 0
+    // 1. SparseMatrix.coeffs[y] contains (0, x)
+    // 2. SparseMatrix.coeffs[y] does not contain (0, x), but (non-0, x) doesn't exist either, so it's implied that the element at (x,y) is 0
+    // Thus the same SparseMatrix can take many forms on the memory.
+    // It's cumbersome to handle 2 cases so here we sanitize SparseMatrix, into the case 2.
+    for mj in ccs.M.iter_mut() {
+        for row in mj.coeffs.iter_mut() {
+            row.retain(|elem| elem.0 != 0.into());
+        }
+    }
+
+    for (rightmost_matrix_index, rightmost) in ccs.M.iter().enumerate().rev() {
+        let leftmost_matrix_index = ccs
+            .M
+            .iter()
+            .position(|leftmost| leftmost == rightmost)
+            .unwrap();
+        assert!(leftmost_matrix_index == rightmost_matrix_index);
+    }
+
+    Ok(())
+}
+
 // Taken from https://github.com/icemelon/halo2-examples/blob/master/src/fibonacci/example2.rs
 
 #[derive(Debug, Clone)]

@@ -142,7 +142,6 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
 
                 S.last_mut().unwrap().push(M.len());
                 M.push(mj);
-                // M matrix exists for each (gate, query) combination.
             }
         }
     }
@@ -153,7 +152,7 @@ fn generate_naive_ccs_instance<HALO2: ff::PrimeField<Repr = [u8; 32]>, F: ark_ff
         l: num_instance_cells,
         t: M.len(),
         q: S.len(),
-        d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(1),
+        d: S.iter().map(|multiset| multiset.len()).max().unwrap_or(0),
         s: log2(m) as usize,
         s_prime: log2(z_height) as usize,
         M,
@@ -174,7 +173,9 @@ pub(crate) fn generate_ccs_instance<
     let mut ccs = generate_naive_ccs_instance(k, custom_gates, cell_mapping, lookup_inputs)?;
     reduce_d(&mut ccs);
     reduce_t(&mut ccs);
+    reduce_q(&mut ccs);
     reduce_n(&mut ccs, cell_mapping);
+    reduce_m(&mut ccs);
     Ok(ccs)
 }
 
@@ -285,7 +286,7 @@ pub(crate) fn reduce_d<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
     }
 
     ccs.t = M.len();
-    ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(1);
+    ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(0);
     ccs.M = M;
     ccs.S = S;
 }
@@ -306,12 +307,26 @@ pub(crate) fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
 
     let mut M: Vec<SparseMatrix<F>> = Vec::new();
     let mut S: Vec<Vec<usize>> = Vec::new();
+    let mut c: Vec<F> = Vec::new();
 
-    for monomial in ccs.S.iter() {
+    for (coefficient, monomial) in ccs.c.iter().zip(ccs.S.iter()) {
+        let does_monomial_contain_empty_matrix = monomial.iter().any(|j| {
+            ccs.M[*j]
+                .coeffs
+                .iter()
+                .all(|row| row.iter().all(|(value, _position)| *value == 0.into()))
+        });
+
+        if does_monomial_contain_empty_matrix {
+            continue;
+        }
+
         S.push(Vec::new());
+        c.push(*coefficient);
 
         for index in monomial {
             let mj = &ccs.M[*index];
+
             if let Some(j) = M.iter().position(|existing| mj == existing) {
                 // If the matrix is already in M, we'll reuse the matrix.
                 S.last_mut().unwrap().push(j);
@@ -321,11 +336,20 @@ pub(crate) fn reduce_t<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
                 M.push(mj.clone());
             }
         }
+
+        // Empty monomial must not exist
+        if 0 >= S.last().unwrap().len() {
+            S.pop().unwrap();
+            c.pop().unwrap();
+        }
     }
 
     ccs.t = M.len();
     ccs.M = M;
+    ccs.q = S.len();
+    ccs.d = S.iter().map(|multiset| multiset.len()).max().unwrap_or(0);
     ccs.S = S;
+    ccs.c = c;
 }
 
 // This function optimizes a CCS instance.
@@ -389,10 +413,72 @@ pub(crate) fn reduce_n<F: ark_ff::PrimeField>(
     }
 
     ccs.n = used_z.len();
+    ccs.s_prime = log2(ccs.n) as usize;
     ccs.l -= unconstrained_cells
         .into_iter()
         .filter(|cell| cell.column_type == VirtualColumnType::Instance)
         .count();
+}
+
+// If ith row of all M matrices happened to be a 0 vector, we can remove that row entirely.
+pub(crate) fn reduce_m<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
+    let mut row_index = 0;
+    while row_index < ccs.m {
+        let is_this_row_unused = ccs.M.iter().all(|matrix| {
+            matrix.coeffs[row_index]
+                .iter()
+                .all(|(value, _position)| *value == 0.into())
+        });
+
+        if is_this_row_unused {
+            ccs.m -= 1;
+
+            for matrix in ccs.M.iter_mut() {
+                matrix.n_rows -= 1;
+                matrix.coeffs.remove(row_index);
+            }
+        } else {
+            row_index += 1;
+        }
+    }
+
+    ccs.s = log2(ccs.m) as usize;
+}
+
+// When a CCS instance has 2 monomials with same variables, we should replace those with 1 monomial with coeffiecents summed up.
+pub(crate) fn reduce_q<F: ark_ff::PrimeField>(ccs: &mut CCS<F>) {
+    for multiset in ccs.S.iter_mut() {
+        // We'll later check if 2 multisets are equal, but multisets are implemented as Vec in Sonobe.
+        // To make the comparison easier, we sort values in each multiset Vec, so that each multiset has one canonical representation in the memory.
+        multiset.sort();
+    }
+
+    // We might remove this index, so here we want to process from rightmost elements in the Vec.
+    for rightmost_monomial_index in (0..ccs.q).rev() {
+        let rightmost_monomial = &ccs.S[rightmost_monomial_index];
+        let leftmost_monomial_index = ccs
+            .S
+            .iter()
+            .position(|leftmost_monomial| leftmost_monomial == rightmost_monomial)
+            .unwrap();
+        // We can unwrap here safely because the value we're searching is guaranteed to be in ccs.S
+
+        // If ccs.S contained the same monomial twice
+        if leftmost_monomial_index != rightmost_monomial_index {
+            // We'll merge the monomial on the right into one on the left
+            let rightmost_monomial_coefficient = ccs.c.remove(rightmost_monomial_index);
+            ccs.c[leftmost_monomial_index] += rightmost_monomial_coefficient;
+            ccs.S.remove(rightmost_monomial_index);
+        }
+    }
+
+    ccs.q = ccs.S.len();
+    ccs.d = ccs
+        .S
+        .iter()
+        .map(|multiset| multiset.len())
+        .max()
+        .unwrap_or(0);
 }
 
 pub(crate) fn generate_z<ARKWORKS: ark_ff::PrimeField>(
@@ -848,27 +934,61 @@ mod tests {
         m2.coeffs.push(vec![(1.into(), 0)]);
         m2.coeffs.push(vec![]);
 
+        // m0 == m1 == m2.
+        // those 3 must be deduplicated.
+
+        let m3 = dense_matrix_to_sparse(vec![
+            vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+            vec![0.into(), 0.into(), 0.into(), 0.into(), 0.into()],
+        ]);
+
+        let mut m4 = SparseMatrix::empty();
+        m4.n_cols = 5;
+        m4.n_rows = 2;
+        m4.coeffs.push(vec![(0.into(), 0)]);
+        m4.coeffs.push(vec![(0.into(), 1)]);
+
+        let mut m5 = SparseMatrix::empty();
+        m5.n_cols = 5;
+        m5.n_rows = 2;
+        m5.coeffs.push(vec![]);
+        m5.coeffs.push(vec![]);
+
+        // m3 == m4 == m5
+        // those 3 must be removed, because it's an empty matrix.
+
         let subject: CCS<Fq> = CCS {
             m: 2,
             n: 5,
             l: 2,
-            t: 3,
-            q: 1,
-            d: 3,
+            t: 6,
+            q: 3,
+            d: 6,
             s: 2,
             s_prime: 3,
-            c: vec![1.into()],
-            S: vec![vec![0, 1, 2]],
-            M: vec![m0.clone(), m1.clone(), m2.clone()],
+            c: vec![1.into(), 2.into(), 3.into()],
+            S: vec![vec![3, 4, 5], vec![0, 1, 2], vec![0, 1, 2, 3, 4, 5]],
+            //      ^will be gone  ^stays         ^will be gone
+            M: vec![
+                m0.clone(),
+                m1.clone(),
+                m2.clone(),
+                m3.clone(),
+                m4.clone(),
+                m5.clone(),
+            ],
         };
 
         let mut actual = subject.clone();
         reduce_t(&mut actual);
 
         let expect = CCS {
+            c: vec![2.into()],
             S: vec![vec![0, 0, 0]],
             M: vec![m0.clone()],
             t: 1,
+            d: 3,
+            q: 1,
             ..subject
         };
 
@@ -988,7 +1108,96 @@ mod tests {
                 ]),
             ],
             n: 3,
+            s_prime: 2,
             l: 1,
+            ..ccs
+        };
+
+        assert_eq!(actual, expect);
+    }
+
+    #[test]
+    fn test_reduce_m() {
+        let ccs: CCS<Fq> = CCS {
+            M: vec![
+                dense_matrix_to_sparse(vec![
+                    vec![0.into(), 0.into(), 1.into()],
+                    vec![0.into(), 0.into(), 0.into()],
+                    vec![0.into(), 2.into(), 0.into()],
+                    vec![0.into(), 0.into(), 0.into()],
+                    vec![3.into(), 0.into(), 0.into()],
+                ]),
+                dense_matrix_to_sparse(vec![
+                    vec![0.into(), 2.into(), 0.into()],
+                    vec![0.into(), 0.into(), 0.into()],
+                    vec![0.into(), 0.into(), 1.into()],
+                    vec![0.into(), 0.into(), 0.into()],
+                    vec![4.into(), 0.into(), 0.into()],
+                ]),
+            ],
+            n: 3,
+            l: 1,
+            m: 5,
+            t: 2,
+            q: 1,
+            d: 2,
+            s: 3,
+            s_prime: 2,
+            c: vec![1.into()],
+            S: vec![vec![0, 1]],
+        };
+
+        let mut actual = ccs.clone();
+        reduce_m(&mut actual);
+
+        let expect = CCS {
+            M: vec![
+                dense_matrix_to_sparse(vec![
+                    vec![0.into(), 0.into(), 1.into()],
+                    vec![0.into(), 2.into(), 0.into()],
+                    vec![3.into(), 0.into(), 0.into()],
+                ]),
+                dense_matrix_to_sparse(vec![
+                    vec![0.into(), 2.into(), 0.into()],
+                    vec![0.into(), 0.into(), 1.into()],
+                    vec![4.into(), 0.into(), 0.into()],
+                ]),
+            ],
+            s: 2,
+            m: 3,
+            ..ccs
+        };
+
+        assert_eq!(actual, expect);
+    }
+
+    #[test]
+    fn test_reduce_q() {
+        let ccs: CCS<Fq> = CCS {
+            M: vec![
+                dense_matrix_to_sparse(vec![vec![0.into(), 1.into()]]),
+                dense_matrix_to_sparse(vec![vec![1.into(), 0.into()]]),
+            ],
+            n: 2,
+            l: 0,
+            m: 1,
+            t: 2,
+            q: 5,
+            d: 2,
+            s: 0,
+            s_prime: 1,
+            c: vec![1.into(), 2.into(), 3.into(), 4.into(), 5.into()],
+            S: vec![vec![1], vec![0, 1], vec![0], vec![1, 0], vec![1]],
+        };
+
+        let mut actual = ccs.clone();
+        reduce_q(&mut actual);
+
+        let expect = CCS {
+            q: 3,
+            d: 2,
+            c: vec![6.into(), 6.into(), 3.into()],
+            S: vec![vec![1], vec![0, 1], vec![0]],
             ..ccs
         };
 
